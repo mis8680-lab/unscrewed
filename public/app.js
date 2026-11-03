@@ -1,0 +1,900 @@
+/**
+ * PackBack MVP -- App Controller v2
+ *
+ * Flow: Input -> Review -> Confirm (qty + step mapping) -> Reassembly (+ History)
+ *
+ * localStorage persistence rules:
+ *  - Persisted: scenario, editedNotes (if modified), customImage flag,
+ *    extractionResult (proposal only), actionLog
+ *  - NEVER persisted as confirmed: record, confirmations, stepMappings
+ *  - On reload: proposals restored, confirmations require fresh UI events
+ *  - record is rebuilt from extraction each time, never fromJSON from storage
+ *
+ * Confirmation source: UI button events only.
+ * No external API calls. No fromJSON on untrusted model data.
+ */
+(function () {
+  'use strict';
+
+  // -- Constants -------------------------------------------------------
+  const STORAGE_KEY = 'packback_mvp_state';
+  const REQUIRED_BAGS = ['A', 'B', 'C'];
+  const VALID_STEPS = [1, 2, 3, 4, 5];
+
+  // -- State -----------------------------------------------------------
+  let state = loadState();
+
+  function defaultState() {
+    return {
+      currentStep: 'input',
+      scenario: 'normal',
+      customImage: null,
+      editedNotes: null,
+      extractionResult: null,
+      extractionInputHash: null,
+      actionLog: [],
+    };
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed !== 'object' || parsed === null) return defaultState();
+        delete parsed.record;
+        delete parsed.confirmations;
+        delete parsed.stepMappings;
+        if (!['normal', 'missing', 'conflict'].includes(parsed.scenario)) {
+          parsed.scenario = 'normal';
+        }
+        if (!['input', 'review'].includes(parsed.currentStep)) {
+          parsed.currentStep = parsed.extractionResult ? 'review' : 'input';
+        }
+        if (parsed.editedNotes !== null) {
+          if (!Array.isArray(parsed.editedNotes) ||
+              !parsed.editedNotes.every(n => typeof n === 'object' && typeof n.panel === 'number' && typeof n.note === 'string')) {
+            parsed.editedNotes = null;
+          }
+        }
+        if (parsed.extractionResult) {
+          if (!parsed.extractionResult.valid || !Array.isArray(parsed.extractionResult.bags)) {
+            parsed.extractionResult = null;
+          }
+        }
+        if (!Array.isArray(parsed.actionLog)) parsed.actionLog = [];
+        return { ...defaultState(), ...parsed };
+      }
+    } catch { /* corrupted */ }
+    return defaultState();
+  }
+
+  function saveState() {
+    const persist = {
+      currentStep: state.currentStep,
+      scenario: state.scenario,
+      customImage: state.customImage,
+      editedNotes: state.editedNotes,
+      extractionResult: state.extractionResult,
+      extractionInputHash: state.extractionInputHash,
+      actionLog: state.actionLog,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
+  }
+
+  let currentRecord = null;
+  let confirmations = {};
+  let stepMappings = {};
+
+  function logAction(action, detail) {
+    state.actionLog.push({ ts: new Date().toISOString(), action, detail: String(detail || '') });
+    if (state.actionLog.length > 200) state.actionLog = state.actionLog.slice(-200);
+    saveState();
+  }
+
+  // -- DOM refs --------------------------------------------------------
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  const stepsNav = $('#steps-nav');
+  const sections = {
+    input: $('#section-input'),
+    review: $('#section-review'),
+    confirm: $('#section-confirm'),
+    reassembly: $('#section-reassembly'),
+    history: $('#section-history'),
+  };
+
+  const _escDiv = document.createElement('div');
+  function esc(str) {
+    _escDiv.textContent = String(str ?? '');
+    return _escDiv.innerHTML;
+  }
+
+  // -- Navigation ------------------------------------------------------
+  function goToStep(step) {
+    state.currentStep = step;
+    saveState();
+    $$('.steps-nav button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.step === step);
+    });
+    Object.entries(sections).forEach(([key, el]) => {
+      el.classList.toggle('active', key === step);
+    });
+    const order = ['input', 'review', 'confirm', 'reassembly', 'history'];
+    const idx = order.indexOf(step);
+    $$('.steps-nav button').forEach(btn => {
+      const btnIdx = order.indexOf(btn.dataset.step);
+      btn.disabled = btnIdx > idx + 1;
+    });
+    if (state.actionLog.length > 0) {
+      $('[data-step="history"]').disabled = false;
+    }
+    if (step === 'input') renderInput();
+    if (step === 'review') renderReview();
+    if (step === 'confirm') renderConfirm();
+    if (step === 'reassembly') renderReassembly();
+    if (step === 'history') renderHistory();
+  }
+
+  stepsNav.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || btn.disabled) return;
+    goToStep(btn.dataset.step);
+  });
+
+  // -- Toast -----------------------------------------------------------
+  let toastTimer;
+  function toast(msg) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+  }
+
+  // -- Error state rendering -------------------------------------------
+  function renderError(container, title, detail) {
+    container.innerHTML = `
+      <div class="error-state">
+        <div class="error-icon">!</div>
+        <div class="error-title">${esc(title)}</div>
+        <div class="error-detail">${esc(detail)}</div>
+      </div>`;
+  }
+
+  // -- Step 1: Input ---------------------------------------------------
+  function renderInput() {
+    const scenario = state.scenario || 'normal';
+    const baseNotes = SAMPLE_INPUTS[scenario]?.notes || [];
+    const notes = state.editedNotes || baseNotes;
+    const container = $('#notes-container');
+    container.innerHTML = '';
+
+    notes.forEach((n) => {
+      const div = document.createElement('div');
+      div.className = 'panel-note';
+      div.innerHTML = `
+        <div class="panel-num">${esc(n.panel)}</div>
+        <textarea data-panel="${esc(n.panel)}" rows="2">${esc(n.note)}</textarea>
+      `;
+      container.appendChild(div);
+    });
+
+    container.querySelectorAll('textarea').forEach(ta => {
+      ta.addEventListener('input', () => {
+        state.editedNotes = getCurrentNotes();
+        if (state.extractionResult) {
+          const currentHash = hashNotes(state.editedNotes);
+          if (currentHash !== state.extractionInputHash) {
+            invalidateExtraction('Input changed - previous extraction invalidated');
+          }
+        }
+        saveState();
+      });
+    });
+
+    $$('.scenario-bar button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.scenario === scenario);
+    });
+
+    if (state.customImage) {
+      $('#preview-img').src = state.customImage;
+      $('#custom-image-badge').style.display = 'inline';
+    } else {
+      $('#preview-img').src = 'fixtures/synthetic-shelf.png';
+      $('#custom-image-badge').style.display = 'none';
+    }
+  }
+
+  function invalidateExtraction(reason) {
+    state.extractionResult = null;
+    state.extractionInputHash = null;
+    currentRecord = null;
+    confirmations = {};
+    stepMappings = {};
+    saveState();
+    if (reason) toast(reason);
+  }
+
+  $('#scenario-bar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    state.scenario = btn.dataset.scenario;
+    state.editedNotes = null;
+    invalidateExtraction(null);
+    saveState();
+    renderInput();
+    logAction('scenario_changed', state.scenario);
+    toast('Scenario: ' + btn.textContent);
+  });
+
+  $('#btn-change-image').addEventListener('click', () => $('#image-input').click());
+  $('#image-area').addEventListener('click', () => $('#image-input').click());
+  $('#image-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.customImage = reader.result;
+      invalidateExtraction('Image changed - previous extraction invalidated');
+      $('#preview-img').src = reader.result;
+      $('#custom-image-badge').style.display = 'inline';
+      saveState();
+      logAction('image_uploaded', file.name);
+      toast('Image uploaded (local only, seeded responses disabled)');
+    };
+    reader.readAsDataURL(file);
+  });
+
+  const imgArea = $('#image-area');
+  imgArea.addEventListener('dragover', (e) => { e.preventDefault(); imgArea.classList.add('dragover'); });
+  imgArea.addEventListener('dragleave', () => imgArea.classList.remove('dragover'));
+  imgArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    imgArea.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      $('#image-input').files = e.dataTransfer.files;
+      $('#image-input').dispatchEvent(new Event('change'));
+    }
+  });
+
+  $('#btn-extract').addEventListener('click', () => {
+    const notes = getCurrentNotes();
+    const match = matchSeededInput(notes, !!state.customImage);
+
+    if (match.matched) {
+      const validated = validateMetaImport(match.metaOutput);
+      if (!validated.valid) {
+        toast('Internal error: saved response validation failed - ' + validated.error);
+        return;
+      }
+      state.extractionResult = validated;
+      state.extractionInputHash = hashNotes(notes);
+      currentRecord = null;
+      confirmations = {};
+      stepMappings = {};
+      saveState();
+      logAction('extraction_seeded', match.scenarioId);
+      goToStep('review');
+    } else {
+      state.extractionResult = null;
+      saveState();
+      if (state.customImage) {
+        toast('Custom image in use - please use Import Meta JSON Directly');
+      } else {
+        toast('No sample data - please use Import Meta JSON Directly');
+      }
+      goToStep('review');
+    }
+  });
+
+  // -- Step 2: Review --------------------------------------------------
+  function renderReview() {
+    const result = state.extractionResult;
+    const bannerC = $('#sample-banner-container');
+    const invalidC = $('#invalidation-container');
+    const bagsC = $('#bags-container');
+    const questionsC = $('#questions-container');
+    const conflictsC = $('#conflicts-container');
+    const limitationsC = $('#limitations-container');
+
+    bannerC.innerHTML = '';
+    invalidC.innerHTML = '';
+    bagsC.innerHTML = '';
+    questionsC.innerHTML = '';
+    conflictsC.innerHTML = '';
+    limitationsC.innerHTML = '';
+
+    if (!result) {
+      renderError(invalidC,
+        'No extraction result',
+        state.customImage
+          ? 'No seeded response for custom images. Import validated Meta JSON below.'
+          : 'Input was changed or no matching sample data found. Import validated Meta JSON below.'
+      );
+      $('#questions-card').style.display = 'none';
+      $('#conflicts-card').style.display = 'none';
+      $('#limitations-card').style.display = 'none';
+      $('#btn-to-confirm').disabled = true;
+      return;
+    }
+
+    $('#btn-to-confirm').disabled = false;
+
+    bannerC.innerHTML = `
+      <div class="sample-banner">
+        <span class="icon">[SAMPLE]</span>
+        Saved Meta test response / Sample mode - not a live API call
+      </div>`;
+
+    result.bags.forEach(bag => {
+      const hasReports = bag.reports && bag.reports.length > 0;
+      const reportValues = hasReports ? [...new Set(bag.reports.map(r => r.value))] : [];
+      const hasConflict = reportValues.length > 1;
+      const isMissing = !hasReports;
+      let statusClass = 'reported';
+      let statusText = 'Reported';
+      if (hasConflict) { statusClass = 'conflict'; statusText = 'Conflict'; }
+      if (isMissing) { statusClass = 'missing-status'; statusText = 'Missing'; }
+
+      let reportsHtml = '';
+      if (hasReports) {
+        reportsHtml = '<div class="bag-reports">' +
+          bag.reports.map(r =>
+            '<div class="report-row">' +
+            '<span>Qty: <strong>' + esc(r.value) + '</strong></span>' +
+            '<span>Evidence: ' + esc(r.evidence.join(', ')) + '</span>' +
+            '</div>'
+          ).join('') +
+          '</div>';
+      }
+
+      bagsC.innerHTML +=
+        '<div class="bag-card ' + (hasConflict ? 'conflict' : isMissing ? 'missing' : '') + '">' +
+          '<div class="bag-header">' +
+            '<span class="bag-id">Bag ' + esc(bag.id) + '</span>' +
+            '<span class="bag-status ' + statusClass + '">' + esc(statusText) + '</span>' +
+          '</div>' +
+          '<div class="bag-detail">Step: <strong>' + (bag.step !== null ? esc(bag.step) : 'Unassigned') + '</strong></div>' +
+          '<div class="bag-detail">Model confirmation proposal: <strong>' + (bag.model_confirmation_proposal !== null ? esc(bag.model_confirmation_proposal) : 'null (expected)') + '</strong></div>' +
+          '<div class="bag-detail">User confirmation required: <strong style="color:var(--primary)">Yes</strong></div>' +
+          reportsHtml +
+        '</div>';
+    });
+
+    if (result.questions && result.questions.length > 0) {
+      $('#questions-card').style.display = 'block';
+      result.questions.forEach(q => {
+        questionsC.innerHTML += '<div class="question-item">' + esc(q) + '</div>';
+      });
+    } else {
+      $('#questions-card').style.display = 'none';
+    }
+
+    if (result.conflicts && result.conflicts.length > 0) {
+      $('#conflicts-card').style.display = 'block';
+      result.conflicts.forEach(c => {
+        conflictsC.innerHTML +=
+          '<div class="question-item" style="border-left-color:var(--danger)">' +
+          'Bag ' + esc(c.bag) + ': reported values ' + esc((c.reported_values || []).join(' vs ')) + ' - unresolved' +
+          '</div>';
+      });
+    } else {
+      $('#conflicts-card').style.display = 'none';
+    }
+
+    if (result.visual_limitations && result.visual_limitations.length > 0) {
+      $('#limitations-card').style.display = 'block';
+      result.visual_limitations.forEach(l => {
+        limitationsC.innerHTML += '<div class="limitation-item">' + esc(l) + '</div>';
+      });
+    } else {
+      $('#limitations-card').style.display = 'none';
+    }
+  }
+
+  $('#btn-json-import').addEventListener('click', () => {
+    const raw = $('#json-import-input').value.trim();
+    if (!raw) { toast('Please enter JSON'); return; }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { toast('JSON parse error'); return; }
+    const validated = validateMetaImport(parsed);
+    if (!validated.valid) { toast('Validation failed: ' + validated.error); return; }
+    state.extractionResult = validated;
+    state.extractionInputHash = hashNotes(getCurrentNotes());
+    currentRecord = null;
+    confirmations = {};
+    stepMappings = {};
+    saveState();
+    logAction('json_imported', 'user paste');
+    toast('Meta JSON imported successfully');
+    renderReview();
+  });
+
+  $('#btn-back-input').addEventListener('click', () => goToStep('input'));
+  $('#btn-to-confirm').addEventListener('click', () => {
+    if (!state.extractionResult) { toast('No extraction result'); return; }
+    buildRecordFromExtraction();
+    goToStep('confirm');
+  });
+
+  // -- Build record from validated extraction --------------------------
+  function buildRecordFromExtraction() {
+    const ext = state.extractionResult;
+    if (!ext) return;
+
+    const rec = new PackBackRecord('mvp-' + Date.now());
+
+    const notes = getCurrentNotes();
+    notes.forEach((n) => {
+      rec.addStep({
+        action: n.note,
+        source: 'user_reported',
+        evidence: ['panel' + n.panel]
+      });
+    });
+
+    ext.bags.forEach(bag => {
+      const firstReport = bag.reports[0];
+      const qty = firstReport ? firstReport.value : null;
+      const ev = firstReport ? firstReport.evidence : [];
+
+      rec.addPart({
+        partId: 'screws_' + bag.id,
+        name: 'Bag ' + bag.id + ' screws',
+        quantity: qty,
+        storage: 'Bag ' + bag.id,
+        linkedStep: bag.step,
+        source: 'user_reported',
+        evidence: ev
+      });
+
+      if (bag.reports.length > 1) {
+        const values = bag.reports.map(r => r.value);
+        const unique = [...new Set(values)];
+        if (unique.length > 1) {
+          rec.addConflict({
+            conflictId: 'extract_' + bag.id + '_qty_' + Date.now(),
+            fieldPath: 'parts.screws_' + bag.id + '.quantity',
+            reports: bag.reports.map(r => ({
+              value: r.value,
+              source: 'user_reported',
+              evidence: r.evidence
+            }))
+          });
+        }
+      }
+    });
+
+    currentRecord = rec;
+    confirmations = {};
+    stepMappings = {};
+
+    ext.bags.forEach(bag => {
+      stepMappings[bag.id] = bag.step;
+    });
+
+    logAction('record_built', ext.bags.length + ' bags');
+  }
+
+  // -- Step 3: Confirm -------------------------------------------------
+  function renderConfirm() {
+    const ext = state.extractionResult;
+    const container = $('#confirm-bags-container');
+    const conflictC = $('#confirm-conflicts-container');
+    const mappingC = $('#confirm-mappings-container');
+    container.innerHTML = '';
+    conflictC.innerHTML = '';
+    mappingC.innerHTML = '';
+
+    if (!ext || !currentRecord) {
+      renderError(container, 'No extraction result', 'Run extraction first.');
+      return;
+    }
+
+    const unresolvedConflicts = currentRecord.getUnresolvedConflicts();
+
+    ext.bags.forEach(bag => {
+      const partId = 'screws_' + bag.id;
+      const part = currentRecord.getPart(partId);
+      const isConfirmed = part && part.quantity.source === 'user_confirmed';
+      const confirmedVal = confirmations[bag.id];
+      const hasConflict = unresolvedConflicts.some(c => c.fieldPath === 'parts.' + partId + '.quantity');
+      const defaultVal = bag.reports[0]?.value ?? '';
+
+      container.innerHTML +=
+        '<div class="bag-card ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : '') + '" id="confirm-bag-' + esc(bag.id) + '">' +
+          '<div class="bag-header">' +
+            '<span class="bag-id">Bag ' + esc(bag.id) + '</span>' +
+            '<span class="bag-status ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : 'reported') + '">' +
+              (isConfirmed ? 'Confirmed' : hasConflict ? 'Conflict unresolved' : 'Unconfirmed') +
+            '</span>' +
+          '</div>' +
+          (bag.reports.length > 0 ?
+            '<div class="bag-reports">' +
+              bag.reports.map(r =>
+                '<div class="report-row"><span>Reported: <strong>' + esc(r.value) + '</strong></span><span>' + esc(r.evidence.join(', ')) + '</span></div>'
+              ).join('') +
+            '</div>'
+          : '<div class="bag-detail" style="color:var(--danger)">No reported quantity</div>') +
+          '<div class="confirm-section">' +
+            '<label>Enter confirmed quantity (Bag ' + esc(bag.id) + ')</label>' +
+            '<div class="confirm-row">' +
+              '<input type="number" id="qty-' + esc(bag.id) + '" min="1" max="999" value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '" data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+              '<button class="btn btn-primary btn-sm" data-confirm-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+                (isConfirmed ? 'Confirmed' : 'Confirm') +
+              '</button>' +
+              (isConfirmed ? '<button class="btn btn-outline btn-sm" data-revoke-bag="' + esc(bag.id) + '">Re-confirm</button>' : '') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+
+    const hasMissingMapping = REQUIRED_BAGS.some(id => stepMappings[id] == null);
+    if (hasMissingMapping) {
+      let mappingHtml = '<div class="card missing" style="border-left:4px solid var(--danger)">' +
+        '<div class="card-title">Step Mapping Required</div>' +
+        '<div class="card-subtitle">Select the missing step mappings. Every bag must have a step assigned.</div>';
+
+      REQUIRED_BAGS.forEach(id => {
+        if (stepMappings[id] == null) {
+          mappingHtml +=
+            '<div class="mapping-row" style="margin-bottom:8px">' +
+              '<label style="font-weight:600">Bag ' + esc(id) + ' step:</label>' +
+              '<div class="confirm-row" style="margin-top:4px">' +
+                '<select id="step-map-' + esc(id) + '" data-map-bag="' + esc(id) + '">' +
+                  '<option value="">Select</option>' +
+                  VALID_STEPS.map(s => '<option value="' + s + '">Step ' + s + '</option>').join('') +
+                '</select>' +
+                '<button class="btn btn-primary btn-sm" data-confirm-mapping="' + esc(id) + '">Confirm mapping</button>' +
+              '</div>' +
+            '</div>';
+        } else {
+          mappingHtml +=
+            '<div class="mapping-row" style="margin-bottom:4px">' +
+              '<span>Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</span>' +
+              '<span class="bag-status confirmed" style="margin-left:8px">Mapped</span>' +
+            '</div>';
+        }
+      });
+
+      mappingHtml += '</div>';
+      mappingC.innerHTML = mappingHtml;
+    } else {
+      mappingC.innerHTML =
+        '<div class="card confirmed" style="border-left:4px solid var(--success)">' +
+          '<div class="card-title">Step Mapping Complete</div>' +
+          REQUIRED_BAGS.map(id =>
+            '<div class="bag-detail">Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</div>'
+          ).join('') +
+        '</div>';
+    }
+
+    if (unresolvedConflicts.length > 0) {
+      conflictC.innerHTML =
+        '<div class="card conflict" style="border-left:4px solid var(--warning)">' +
+          '<div class="card-title">Conflict Resolution Required</div>' +
+          '<div class="card-subtitle">Confirming the quantity for a conflicted bag resolves its conflict automatically.</div>' +
+          unresolvedConflicts.map(c =>
+            '<div class="question-item" style="border-left-color:var(--danger)">' +
+            esc(c.fieldPath) + ': ' + c.reports.map(r => esc(r.value) + ' (' + esc(r.evidence.join(',')) + ')').join(' vs ') +
+            '</div>'
+          ).join('') +
+        '</div>';
+    }
+
+    updateReassemblyButton();
+  }
+
+  $('#confirm-bags-container').addEventListener('click', (e) => {
+    const confirmBtn = e.target.closest('[data-confirm-bag]');
+    const revokeBtn = e.target.closest('[data-revoke-bag]');
+    if (confirmBtn && !confirmBtn.disabled) doConfirm(confirmBtn.dataset.confirmBag);
+    if (revokeBtn) doRevoke(revokeBtn.dataset.revokeBag);
+  });
+
+  $('#confirm-mappings-container').addEventListener('click', (e) => {
+    const mapBtn = e.target.closest('[data-confirm-mapping]');
+    if (!mapBtn) return;
+    const bagId = mapBtn.dataset.confirmMapping;
+    const select = $('#step-map-' + bagId);
+    if (!select) return;
+    const val = parseInt(select.value, 10);
+    if (!VALID_STEPS.includes(val)) {
+      toast('Please select a valid step (1-5)');
+      return;
+    }
+    stepMappings[bagId] = val;
+    if (currentRecord) {
+      currentRecord.updatePartField('screws_' + bagId, 'linkedStep', val, 'user_confirmed', ['user_ui_mapping'], 'User step mapping');
+    }
+    logAction('step_mapped', bagId + '=' + val);
+    toast('Bag ' + bagId + ': mapped to step ' + val);
+    renderConfirm();
+  });
+
+  function doConfirm(bagId) {
+    if (!currentRecord) { toast('No record'); return; }
+    const input = $('#qty-' + bagId);
+    if (!input) return;
+    const val = parseInt(input.value, 10);
+
+    if (!Number.isSafeInteger(val) || val < 1) {
+      toast('Quantity must be a positive integer (1 or more)');
+      return;
+    }
+
+    const partId = 'screws_' + bagId;
+    const conflicts = currentRecord.getUnresolvedConflicts().filter(c => c.fieldPath === 'parts.' + partId + '.quantity');
+    conflicts.forEach(c => {
+      currentRecord.resolveConflict(c.conflictId, {
+        resolvedValue: val,
+        reason: 'User confirmed: ' + val,
+        evidence: ['user_ui_confirm']
+      });
+    });
+
+    if (conflicts.length === 0) {
+      currentRecord.confirmPartField(partId, 'quantity', val, ['user_ui_confirm']);
+    }
+
+    confirmations[bagId] = val;
+    logAction('quantity_confirmed', bagId + '=' + val);
+    toast('Bag ' + bagId + ': ' + val + ' confirmed');
+    renderConfirm();
+  }
+
+  function doRevoke(bagId) {
+    if (!currentRecord) return;
+    const prevConfirmations = { ...confirmations };
+    const prevMappings = { ...stepMappings };
+    delete prevConfirmations[bagId];
+
+    buildRecordFromExtraction();
+
+    for (const [id, val] of Object.entries(prevConfirmations)) {
+      if (id !== bagId) {
+        const partId = 'screws_' + id;
+        const conflicts = currentRecord.getUnresolvedConflicts().filter(c => c.fieldPath === 'parts.' + partId + '.quantity');
+        conflicts.forEach(c => {
+          currentRecord.resolveConflict(c.conflictId, {
+            resolvedValue: val,
+            reason: 'User confirmed: ' + val,
+            evidence: ['user_ui_confirm']
+          });
+        });
+        if (conflicts.length === 0) {
+          currentRecord.confirmPartField(partId, 'quantity', val, ['user_ui_confirm']);
+        }
+        confirmations[id] = val;
+      }
+    }
+
+    stepMappings = prevMappings;
+    logAction('quantity_revoked', bagId);
+    toast('Bag ' + bagId + ': confirmation revoked');
+    renderConfirm();
+  }
+
+  function updateReassemblyButton() {
+    const btn = $('#btn-to-reassembly');
+    if (!currentRecord) { btn.disabled = true; return; }
+
+    const allQtyConfirmed = REQUIRED_BAGS.every(id => {
+      const part = currentRecord.getPart('screws_' + id);
+      return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
+    });
+    const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
+    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null && VALID_STEPS.includes(stepMappings[id]));
+
+    btn.disabled = !(allQtyConfirmed && noConflicts && allMapped);
+
+    const gateStatus = $('#gate-status');
+    if (gateStatus) {
+      const gates = [];
+      if (!allQtyConfirmed) gates.push('Quantities not confirmed');
+      if (!noConflicts) gates.push('Unresolved conflicts');
+      if (!allMapped) gates.push('Step mapping incomplete');
+      gateStatus.innerHTML = gates.length > 0
+        ? '<div class="gate-blocked">Blocked: ' + gates.map(g => esc(g)).join(', ') + '</div>'
+        : '<div class="gate-clear">All conditions met</div>';
+    }
+  }
+
+  $('#btn-back-review').addEventListener('click', () => goToStep('review'));
+  $('#btn-to-reassembly').addEventListener('click', () => {
+    if (!currentRecord) return;
+    const allQtyConfirmed = REQUIRED_BAGS.every(id => {
+      const part = currentRecord.getPart('screws_' + id);
+      return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
+    });
+    const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
+    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null);
+    if (!allQtyConfirmed || !noConflicts || !allMapped) {
+      toast('All bag quantities must be confirmed, conflicts resolved, and steps mapped');
+      return;
+    }
+    goToStep('reassembly');
+  });
+
+  // -- Step 4: Reassembly ---------------------------------------------
+  function renderReassembly() {
+    const content = $('#reassembly-content');
+
+    if (!currentRecord) {
+      renderError(content, 'No confirmed record', 'Complete the confirmation step first.');
+      return;
+    }
+
+    const summary = currentRecord.toReassemblySummary();
+    const allConfirmed = summary.parts.every(p => p.quantityIsConfirmed);
+    const hasConflicts = summary.parts.some(p => p.hasUnresolvedConflict);
+    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null);
+
+    if (!allConfirmed || hasConflicts || !allMapped) {
+      const reasons = [];
+      if (!allConfirmed) reasons.push('Not all bag quantities are confirmed.');
+      if (hasConflicts) reasons.push('There are unresolved conflicts.');
+      if (!allMapped) reasons.push('Step mapping is incomplete.');
+      content.innerHTML =
+        '<div class="reassembly-blocked">' +
+          '<div class="blocked-icon">LOCKED</div>' +
+          '<div class="reason">' + reasons.map(r => esc(r)).join(' ') + '</div>' +
+          '<button class="btn btn-primary" onclick="document.querySelector(\'[data-step=confirm]\').click()">Go to Confirm</button>' +
+        '</div>';
+      return;
+    }
+
+    const steps = currentRecord._data.steps;
+    const refs = buildReassemblyRefs(currentRecord, state.extractionResult, stepMappings, state.editedNotes);
+
+    content.innerHTML =
+      '<div class="card">' +
+        '<div class="card-title">Reassembly Reference (Reverse Order)</div>' +
+        '<div class="card-subtitle" style="color:var(--danger);font-weight:600">' +
+          'NOTICE: This is a reverse-order reference of the disassembly record. ' +
+          'It is not a mechanical assembly instruction or safety guarantee. ' +
+          'Torque, load, and structural safety are outside the scope of this app.' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card">' +
+        '<div class="card-title">Confirmed Parts</div>' +
+        summary.parts.map(p =>
+          '<div class="bag-card confirmed" style="margin-bottom:8px">' +
+            '<div class="bag-header">' +
+              '<span class="bag-id">' + esc(p.storage) + '</span>' +
+              '<span class="bag-status confirmed">Confirmed</span>' +
+            '</div>' +
+            '<div class="bag-detail">Part: <strong>' + esc(p.name) + '</strong></div>' +
+            '<div class="bag-detail">Quantity: <strong>' + esc(p.quantity) + '</strong></div>' +
+            '<div class="bag-detail">Disassembly step: <strong>#' + esc(p.linkedStep) + '</strong></div>' +
+          '</div>'
+        ).join('') +
+      '</div>' +
+
+      '<div class="card">' +
+        '<div class="card-title">Disassembly Steps (Reverse = Reassembly Order Reference)</div>' +
+        refs.map((ref) =>
+          '<div class="reassembly-step">' +
+            '<span class="step-num">Ref ' + ref.refNumber + '</span>' +
+            '<span>' + esc(ref.originalNote) + '</span>' +
+            '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px">' +
+              'Original step ' + (ref.step.stepIndex + 1) + ' / Evidence: ' + esc(ref.step.evidence.join(', ')) +
+            '</div>' +
+            ref.lines.map(l =>
+              '<div class="ref-confirmed" style="font-size:0.8rem;margin-top:4px">' + esc(l.text) + '</div>' +
+              l.corrections.map(c =>
+                '<div class="ref-correction" style="font-size:0.8rem;margin-top:4px;padding:4px 8px;background:#fff3cd;border-left:3px solid #d97706;color:#7a4a00;font-weight:600">' + esc(c) + '</div>'
+              ).join('')
+            ).join('') +
+          '</div>'
+        ).join('') +
+      '</div>' +
+
+      '<div class="sample-banner" style="background:var(--danger)">' +
+        '<span class="icon">[!]</span> ' +
+        'safe: false - Confirmed quantities are not evidence of physical safety.' +
+      '</div>';
+  }
+
+  $('#btn-back-confirm').addEventListener('click', () => goToStep('confirm'));
+
+  // -- Step 5: History -------------------------------------------------
+  function renderHistory() {
+    const container = $('#history-container');
+    let items = [];
+
+    state.actionLog.forEach(entry => {
+      items.push({ ts: entry.ts, action: entry.action, detail: entry.detail || '' });
+    });
+
+    if (currentRecord) {
+      currentRecord._data.parts.forEach(part => {
+        ['quantity', 'name', 'storage', 'linkedStep'].forEach(field => {
+          if (part[field] && part[field].history) {
+            part[field].history.forEach(h => {
+              items.push({
+                ts: h.timestamp,
+                action: part.partId + '.' + field + ' changed',
+                detail: JSON.stringify(h.previousValue) + ' -> current (' + h.reason + ')'
+              });
+            });
+          }
+        });
+      });
+      currentRecord._data.conflicts.forEach(c => {
+        if (c.resolution) {
+          items.push({
+            ts: c.resolution.timestamp,
+            action: 'Conflict resolved: ' + c.conflictId,
+            detail: c.resolution.reason + ' -> ' + c.resolution.resolvedValue
+          });
+        }
+      });
+    }
+
+    items.sort((a, b) => b.ts.localeCompare(a.ts));
+
+    if (items.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-secondary);padding:12px">No history</p>';
+      return;
+    }
+
+    container.innerHTML = items.map(item =>
+      '<div class="history-item">' +
+        '<div class="ts">' + esc(formatTime(item.ts)) + '</div>' +
+        '<div class="action">' + esc(item.action) + '</div>' +
+        '<div style="font-size:0.8125rem;color:var(--text-secondary)">' + esc(item.detail) + '</div>' +
+      '</div>'
+    ).join('');
+  }
+
+  $('#btn-back-from-history').addEventListener('click', () => {
+    const step = currentRecord ? 'confirm' : 'input';
+    goToStep(step);
+  });
+
+  // -- Reset -----------------------------------------------------------
+  $('#btn-reset').addEventListener('click', () => {
+    if (!confirm('Reset all app data?')) return;
+    state = defaultState();
+    currentRecord = null;
+    confirmations = {};
+    stepMappings = {};
+    saveState();
+    renderInput();
+    goToStep('input');
+    toast('App data reset');
+  });
+
+  // -- Helpers ---------------------------------------------------------
+  function getCurrentNotes() {
+    const textareas = $$('#notes-container textarea');
+    if (textareas.length === 0) {
+      return state.editedNotes || SAMPLE_INPUTS[state.scenario]?.notes || [];
+    }
+    return Array.from(textareas).map(ta => ({
+      panel: parseInt(ta.dataset.panel, 10),
+      note: ta.value
+    }));
+  }
+
+  function hashNotes(notes) {
+    return JSON.stringify(notes);
+  }
+
+  function formatTime(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch { return iso; }
+  }
+
+  // -- Init ------------------------------------------------------------
+  renderInput();
+  goToStep(state.currentStep || 'input');
+
+})();

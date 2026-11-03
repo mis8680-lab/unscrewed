@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>PackBack - Disassembly Record Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>PackBack</h1>
+    <span class="badge">Sample Mode</span>
+  </header>
+
+  <main class="main">
+    <nav class="steps-nav" id="steps-nav">
+      <button data-step="input" class="active">1. Input</button>
+      <button data-step="review" disabled>2. Review</button>
+      <button data-step="confirm" disabled>3. Confirm</button>
+      <button data-step="reassembly" disabled>4. Reassembly</button>
+      <button data-step="history" disabled>5. History</button>
+    </nav>
+
+    <!-- STEP 1: Input -->
+    <section class="section active" id="section-input">
+      <div class="card">
+        <div class="card-title">Select Scenario</div>
+        <div class="card-subtitle">Demonstrates the flow with saved Meta test responses</div>
+        <div class="scenario-bar" id="scenario-bar">
+          <button data-scenario="normal" class="active">Normal</button>
+          <button data-scenario="missing">Missing</button>
+          <button data-scenario="conflict">Conflict</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Disassembly Photos</div>
+        <div class="card-subtitle">Synthetic 5-panel test image (local only) <span id="custom-image-badge" class="badge" style="display:none;background:var(--danger)">Custom</span></div>
+        <div class="image-upload-area" id="image-area">
+          <img id="preview-img" src="fixtures/synthetic-shelf.png" alt="Synthetic 5-panel disassembly photo">
+        </div>
+        <input type="file" id="image-input" accept="image/*" style="display:none">
+        <button class="btn btn-outline btn-sm" id="btn-change-image">Choose different image</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Panel Notes</div>
+        <div class="card-subtitle">You can edit the notes for each disassembly step</div>
+        <div id="notes-container"></div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary btn-full" id="btn-extract">
+          Run Extraction (Saved Meta Response)
+        </button>
+      </div>
+    </section>
+
+    <!-- STEP 2: Review -->
+    <section class="section" id="section-review">
+      <div id="sample-banner-container"></div>
+      <div id="invalidation-container"></div>
+
+      <div class="card">
+        <div class="card-title">Extracted Bag Information</div>
+        <div class="card-subtitle">Model output - confirmed_quantity is always null (requires user confirmation)</div>
+        <div id="bags-container"></div>
+      </div>
+
+      <div class="card" id="questions-card" style="display:none">
+        <div class="card-title">Model Questions</div>
+        <div id="questions-container"></div>
+      </div>
+
+      <div class="card" id="conflicts-card" style="display:none">
+        <div class="card-title">Conflicts Detected</div>
+        <div id="conflicts-container"></div>
+      </div>
+
+      <div class="card" id="limitations-card" style="display:none">
+        <div class="card-title">Visual Limitations</div>
+        <div id="limitations-container"></div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-outline" id="btn-back-input">Back to Input</button>
+        <button class="btn btn-primary btn-full" id="btn-to-confirm" disabled>Proceed to Confirm</button>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">Import Meta JSON Directly</div>
+        <div class="card-subtitle">Paste validated JSON from modified input or external model output</div>
+        <div class="json-import-area">
+          <textarea id="json-import-input" placeholder='{"bags":[{"id":"A",...},{"id":"B",...},{"id":"C",...}],"safety_verified":false,...}'></textarea>
+          <button class="btn btn-outline btn-sm btn-full" id="btn-json-import" style="margin-top:8px">
+            Import and Validate JSON
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: Confirm -->
+    <section class="section" id="section-confirm">
+      <div class="card">
+        <div class="card-title">Confirm A/B/C Quantities</div>
+        <div class="card-subtitle">Confirm the quantity in each bag manually. Only explicit button clicks count as confirmation.</div>
+        <div id="confirm-bags-container"></div>
+      </div>
+
+      <div id="confirm-mappings-container"></div>
+      <div id="confirm-conflicts-container"></div>
+
+      <div id="gate-status" style="margin:8px 0"></div>
+
+      <div class="btn-group">
+        <button class="btn btn-outline" id="btn-back-review">Back to Review</button>
+        <button class="btn btn-primary btn-full" id="btn-to-reassembly" disabled>Proceed to Reassembly</button>
+      </div>
+    </section>
+
+    <!-- STEP 4: Reassembly -->
+    <section class="section" id="section-reassembly">
+      <div id="reassembly-content"></div>
+      <div class="btn-group">
+        <button class="btn btn-outline" id="btn-back-confirm">Back to Confirm</button>
+      </div>
+    </section>
+
+    <!-- STEP 5: History -->
+    <section class="section" id="section-history">
+      <div class="card">
+        <div class="card-title">Change History</div>
+        <div id="history-container"></div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-outline" id="btn-back-from-history">Back to Current State</button>
+      </div>
+    </section>
+
+    <div class="reset-area">
+      <button class="btn btn-danger btn-sm" id="btn-reset">Reset App Data</button>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="record-browser.js"></script>
+  <script src="sample-data.js"></script>
+  <script src="reassembly-refs.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

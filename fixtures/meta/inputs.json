@@ -1,0 +1,68 @@
+{
+  "normal": [
+    {
+      "panel": 1,
+      "note": "Fully assembled."
+    },
+    {
+      "panel": 2,
+      "note": "Removed back panel. Put 4 screws in bag A."
+    },
+    {
+      "panel": 3,
+      "note": "Removed upper shelf. Put 4 screws in bag B."
+    },
+    {
+      "panel": 4,
+      "note": "Removed lower shelf. Put 4 screws in bag C."
+    },
+    {
+      "panel": 5,
+      "note": "Wood: 2 side panels, 2 shelves, 1 back panel. Bags A/B/C each hold 4 screws."
+    }
+  ],
+  "missing": [
+    {
+      "panel": 1,
+      "note": "Fully assembled."
+    },
+    {
+      "panel": 2,
+      "note": "Removed back panel. Put 4 screws in bag A."
+    },
+    {
+      "panel": 3,
+      "note": "Removed upper shelf."
+    },
+    {
+      "panel": 4,
+      "note": "Removed lower shelf. Put 4 screws in bag C."
+    },
+    {
+      "panel": 5,
+      "note": "Laid out the wood parts and bags."
+    }
+  ],
+  "conflict": [
+    {
+      "panel": 1,
+      "note": "Fully assembled."
+    },
+    {
+      "panel": 2,
+      "note": "Removed back panel. Put 6 screws in bag A."
+    },
+    {
+      "panel": 3,
+      "note": "Removed upper shelf. Put 4 screws in bag B."
+    },
+    {
+      "panel": 4,
+      "note": "Removed lower shelf. Put 4 screws in bag C."
+    },
+    {
+      "panel": 5,
+      "note": "Wood: 2 side panels, 2 shelves, 1 back panel. Bags A/B/C each hold 4 screws."
+    }
+  ]
+}
