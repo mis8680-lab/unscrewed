@@ -105,7 +105,7 @@ function bagLettersInText(text) {
 function clausesOf(text) {
   const out = [];
   for (const sen of sentencesOf(text)) {
-    const parts = sen.split(/\s*,\s*|\s+and\s+/i).flatMap(p => p.split(new RegExp('\\s+(?=(?:\\d+|' + NUMW_SOURCE + ')\\s+(?:in|into)\\s+bags?\\b)', 'i'))).filter(x => x !== undefined && x !== '');
+    const parts = sen.split(/\s*,\s*|\s+(?:and|but|while|whereas|or)\s+/i).flatMap(p => p.split(new RegExp('\\s+(?=(?:\\d+|' + NUMW_SOURCE + ')\\s+(?:in|into)\\s+bags?\\b)', 'i'))).filter(x => x !== undefined && x !== '');
     let cur = '';
     for (const p of parts) {
       if (cur && bagLettersInSentence(p).length && bagLettersInSentence(cur).length) { out.push(cur); cur = p; }
@@ -114,6 +114,16 @@ function clausesOf(text) {
     if (cur) out.push(cur);
   }
   return out;
+}
+
+/** True when the clause describes bag b as empty, spare, waiting, unused, none or nothing: no count belongs to it. */
+const BAG_EMPTY_WORDS = '(?:empty|spare|waits?|waiting|unused|none|nothing)';
+function bagDescribedEmpty(clause, b) {
+  const L = '[' + b + b.toLowerCase() + ']';
+  const head = '(?<![A-Za-z])bags?[\\s\\-#:]*' + L + '(?![A-Za-z0-9])';
+  const after = new RegExp(head + '(?:(?!\\bbags?\\b)[^.;,!?\\d]){0,25}?\\b' + BAG_EMPTY_WORDS + '\\b', 'i');
+  const before = new RegExp('\\b' + BAG_EMPTY_WORDS + '\\s+(?:in|for|at)\\s+' + head, 'i');
+  return after.test(clause) || before.test(clause);
 }
 
 /** Bag letters (A to H) a set of notes mentions. Sorted, unique. */
@@ -184,7 +194,7 @@ function quantitiesInNote(text) {
 /** True when the note states n as a fastener or bag quantity. */
 function noteSupportsQuantity(text, n, bagId) {
   if (!bagId) return quantitiesInNote(text).has(n);
-  return clausesOf(text).some(c => bagLettersInSentence(c).includes(bagId) && quantitiesInNote(c).has(n));
+  return clausesOf(text).some(c => bagLettersInSentence(c).includes(bagId) && !bagDescribedEmpty(c, bagId) && quantitiesInNote(c).has(n));
 }
 
 /** Integers each note states for each bag, e.g. { A: Map(4 -> [5], 6 -> [2]) }. */
@@ -195,6 +205,7 @@ function deriveNoteQuantities(notes) {
       const bags = bagLettersInSentence(sentence);
       if (!bags.length) continue;
       for (const b of bags) for (const n of quantitiesInNote(sentence)) {
+        if (bagDescribedEmpty(sentence, b)) continue;
         if (!Number.isSafeInteger(n) || n < 1) continue;
         if (!out[b]) out[b] = new Map();
         if (!out[b].has(n)) out[b].set(n, []);
@@ -247,7 +258,7 @@ function crossCheckAndDerive(v, notes) {
         const ev = 'step' + p;
         const same = bag.reports.find(r => r.value === value && r.evidence.includes(ev));
         if (same) same.supported = true;
-        else bag.reports.push({ value, evidence: [ev], supported: true });
+        else bag.reports.push({ value, evidence: [ev], supported: true, source: 'notes' });
       }
     }
   }
@@ -264,12 +275,18 @@ function crossCheckAndDerive(v, notes) {
 function reportSupported(r) { return !r || r.supported !== false; }
 /** Two different numbers from any source mean the bag needs a recount. */
 function bagHasConflict(bag) { return new Set((bag.reports || []).map(r => r.value)).size > 1; }
-/** The number to prefill the confirm box with, or null. Only when every supported report agrees and there is at least one, and no other number exists. */
+/**
+ * The number to prefill the confirm box with, or null. Only when the bag has at least one Meta-reported
+ * value that its note supports, every value from every source agrees, and the note-derived value equals
+ * the Meta-reported one. Note-derived numbers Meta did not report for the bag never prefill on their own.
+ */
 function bagPrefill(bag) {
   const reports = bag.reports || [];
-  const supported = reports.filter(reportSupported);
-  if (!supported.length || bagHasConflict(bag)) return null;
-  return supported[0].value;
+  if (bagHasConflict(bag)) return null;
+  const meta = reports.filter(r => !r || r.source !== 'notes');
+  const metaSupported = meta.filter(reportSupported);
+  if (!metaSupported.length) return null;
+  return metaSupported[0].value;
 }
 const BAG_CHECK_MESSAGE = "Check this bag: Meta found it in your notes but we couldn't match the exact words.";
 const NO_BAGS_MESSAGE = "Meta didn't find any labeled bags. Label your bags A to H in the notes, or say 'bag A' when you record.";
@@ -278,7 +295,7 @@ const OBS_MAX_PER_STEP = 3;
 const OBS_MAX_CHARS = 140;
 const COUNT_WORDS = new Set(['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'dozen', 'dozens', 'pair', 'pairs', 'couple', 'single', 'double', 'triple',
   'few', 'several', 'many', 'handful', 'handfuls', 'lots', 'lot', 'numerous', 'some', 'plenty', 'multiple', 'bunch', 'bunches', 'loads', 'both', 'no', 'none', 'zero']);
-const ROMAN_RE = /^(?:i{1,3}|iv|vi{0,3}|ix|xi{0,3}|xiv|xv|xvi{0,3}|xx)$/;
+const ROMAN_RE = /^(?:i{1,3}|iv|vi{0,3}|ix|x{1,2}(?:ix|iv|vi{0,3}|i{1,3})|xx|xxx|xl|l)$/;
 const FASTENER_RE = /^(?:screws?|bolts?|nuts?|washers?|fasteners?|dowels?)$/;
 
 /**
@@ -288,7 +305,7 @@ const FASTENER_RE = /^(?:screws?|bolts?|nuts?|washers?|fasteners?|dowels?)$/;
  * step or photo ("step 3") do not count. Over-blocking is intended.
  */
 function observationHasFastenerCount(text) {
-  const tokens = String(text).normalize('NFKC').toLowerCase().match(/\d+|[a-z]+\d*/g) || [];
+  const tokens = String(text).normalize('NFKC').replace(/\p{Cf}/gu, '').normalize('NFKC').toLowerCase().match(/\d+|[a-z]+\d*/g) || [];
   const fastener = [];
   const numeric = [];
   tokens.forEach((t, i) => {
@@ -299,7 +316,7 @@ function observationHasFastenerCount(text) {
     if (t === 'many' && prev === 'how') return;
     if (/\d/.test(t) || COUNT_WORDS.has(t) || ROMAN_RE.test(t)) numeric.push(i);
   });
-  return fastener.some(f => numeric.some(n => Math.abs(f - n) <= 6));
+  return fastener.some(f => numeric.some(n => Math.abs(f - n) <= 8));
 }
 
 /**
