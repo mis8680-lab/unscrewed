@@ -117,12 +117,27 @@
     return _escDiv.innerHTML;
   }
 
+  // Evidence ids like "panel2" are the step numbers of the photo sheet. People see "step 2".
+  function evLabel(e) {
+    const m = /^panel(\d+)$/i.exec(String(e).trim());
+    return m ? 'step ' + m[1] : String(e);
+  }
+  function evList(arr) { return (arr || []).map(evLabel).join(', '); }
+  function plainSteps(t) { return String(t).replace(/\bpanel ?(\d)\b/gi, 'step $1'); }
+  function cap(t) { t = String(t); return t.charAt(0).toUpperCase() + t.slice(1); }
+  const CHECK_SVG = '<svg class="check-draw" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const SCENARIO_LABELS = { normal: 'Normal', missing: 'Missing bag', conflict: 'Conflicting counts' };
+  const EXTRACT_LABEL = 'Build bag record from saved response';
+  const LIVE_LABEL = 'Build bag record with a live Meta call';
+  let lastConfirmedBag = null;
+
   // -- Navigation ------------------------------------------------------
   function goToStep(step) {
     state.currentStep = step;
     saveState();
     $$('.steps-nav button').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.step === step);
+      if (btn.dataset.step === step) btn.setAttribute('aria-current', 'step'); else btn.removeAttribute('aria-current');
     });
     Object.entries(sections).forEach(([key, el]) => {
       el.classList.toggle('active', key === step);
@@ -156,14 +171,13 @@
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
   }
 
   // -- Error state rendering -------------------------------------------
   function renderError(container, title, detail) {
     container.innerHTML = `
       <div class="error-state">
-        <div class="error-icon">!</div>
         <div class="error-title">${esc(title)}</div>
         <div class="error-detail">${esc(detail)}</div>
       </div>`;
@@ -181,8 +195,8 @@
       const div = document.createElement('div');
       div.className = 'panel-note';
       div.innerHTML = `
-        <div class="panel-num">${esc(n.panel)}</div>
-        <textarea data-panel="${esc(n.panel)}" rows="2">${esc(n.note)}</textarea>
+        <label for="note-${esc(n.panel)}">Step ${esc(n.panel)}</label>
+        <textarea id="note-${esc(n.panel)}" data-panel="${esc(n.panel)}" rows="2">${esc(n.note)}</textarea>
       `;
       container.appendChild(div);
     });
@@ -193,7 +207,7 @@
         if (state.extractionResult) {
           const currentHash = hashNotes(state.editedNotes);
           if (currentHash !== state.extractionInputHash) {
-            invalidateExtraction('Input changed - previous extraction invalidated');
+            invalidateExtraction('You edited the notes, so the earlier result was cleared. Build the bag record again.');
           }
         }
         saveState();
@@ -202,13 +216,16 @@
 
     $$('.scenario-bar button').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.scenario === scenario);
+      btn.setAttribute('aria-pressed', btn.dataset.scenario === scenario ? 'true' : 'false');
     });
 
     if (state.customImage) {
       $('#preview-img').src = state.customImage;
-      $('#custom-image-badge').style.display = 'inline';
+      $('#preview-img').alt = 'The photo you chose';
+      $('#custom-image-badge').style.display = 'block';
     } else {
       $('#preview-img').src = 'fixtures/synthetic-shelf.png';
+      $('#preview-img').alt = 'Five numbered photos of a small wooden bookshelf being taken apart, with zip bags labeled A, B and C appearing in later photos';
       $('#custom-image-badge').style.display = 'none';
     }
   }
@@ -233,7 +250,7 @@
     saveState();
     renderInput();
     logAction('scenario_changed', state.scenario);
-    toast('Scenario: ' + btn.textContent);
+    toast('Sample loaded: ' + btn.textContent);
   });
 
   $('#btn-change-image').addEventListener('click', () => $('#image-input').click());
@@ -244,12 +261,13 @@
     const reader = new FileReader();
     reader.onload = () => {
       state.customImage = reader.result;
-      invalidateExtraction('Image changed - previous extraction invalidated');
+      invalidateExtraction('You chose a new photo, so the earlier result was cleared.');
       $('#preview-img').src = reader.result;
-      $('#custom-image-badge').style.display = 'inline';
+      $('#preview-img').alt = 'The photo you chose';
+      $('#custom-image-badge').style.display = 'block';
       saveState();
       logAction('image_uploaded', file.name);
-      toast('Image uploaded (local only, seeded responses disabled)');
+      toast('Photo loaded. It stays in this browser unless you make a live Meta call.');
     };
     reader.readAsDataURL(file);
   });
@@ -274,7 +292,7 @@
     if (match.matched) {
       const validated = validateMetaImport(match.metaOutput);
       if (!validated.valid) {
-        toast('Internal error: saved response validation failed - ' + validated.error);
+        toast('The saved response did not pass PackBack\'s checks (' + validated.error + '). Reload the page and try again.');
         return;
       }
       state.extractionResult = validated;
@@ -291,9 +309,9 @@
       state.extractionMeta = null;
       saveState();
       if (state.customImage) {
-        toast('Custom image in use - please use Import Meta JSON Directly');
+        toast('Saved responses only match the test photo. Paste a Meta response on the next screen, or use a live call.');
       } else {
-        toast('No sample data - please use Import Meta JSON Directly');
+        toast('These notes do not match a saved response. Paste a Meta response on the next screen, or pick a sample again.');
       }
       goToStep('review');
     }
@@ -317,9 +335,9 @@
       liveAvailable = j.live === true;
       if (typeof j.model === 'string') liveModel = j.model;
     } catch { liveAvailable = false; }
-    $('#mode-badge').textContent = liveAvailable ? 'Live: Meta ' + liveModel : 'Sample Mode';
+    $('#mode-badge').textContent = liveAvailable ? 'Live Meta calls on (' + liveModel + ')' : 'Using saved Meta responses';
     liveBtn.disabled = !liveAvailable;
-    if (!liveAvailable) setLiveStatus('Live mode needs META_API_KEY in .env on the server. Sample mode works without it.', false);
+    if (!liveAvailable) setLiveStatus('Live Meta calls are off because the server has no Meta API key. The saved response works without one.', false);
   }
 
   // The server returns the already-sanitized shape (bags[].reports). Convert it back to the import shape
@@ -346,27 +364,27 @@
     const body = { notes };
     if (state.customImage) {
       const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(state.customImage);
-      if (!m) { setLiveStatus('Live mode supports PNG, JPEG or WebP images only.', true); return; }
+      if (!m) { setLiveStatus('Live calls accept PNG, JPEG or WebP photos only. Choose a different photo, or paste a Meta response instead.', true); return; }
       body.imageMime = m[1];
       body.imageBase64 = m[2];
     }
     liveBtn.disabled = true;
     $('#btn-extract').disabled = true;
-    liveBtn.textContent = 'Calling Meta... (can take up to 60s)';
-    setLiveStatus('Uploading image and waiting for the model...', false);
+    liveBtn.textContent = 'Asking Meta (up to 60 seconds)';
+    setLiveStatus('Sending your photo and notes to Meta. This can take up to a minute.', false);
     try {
       const r = await fetch('api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PackBack': '1' }, body: JSON.stringify(body) });
       let j;
       try { j = await r.json(); } catch { j = null; }
       if (!r.ok || !j || j.error) {
         const e = (j && j.error) || {};
-        setLiveStatus('Live call failed (' + (e.code || 'http_' + r.status) + '): ' + (e.message || 'unknown error'), true);
+        setLiveStatus('The live Meta call failed: ' + (e.message || 'no reason was given') + '. Try again, or use the saved response.', true);
         logAction('live_failed', e.code || r.status);
         return;
       }
       const validated = validateMetaImport(toImportShape(j.proposal));
       if (!validated.valid) {
-        setLiveStatus('Live response rejected by the app validator: ' + validated.error, true);
+        setLiveStatus('PackBack rejected Meta\'s answer: ' + validated.error + '. Try the live call again.', true);
         logAction('live_rejected', validated.error);
         return;
       }
@@ -381,9 +399,9 @@
       setLiveStatus('', false);
       goToStep('review');
     } catch {
-      setLiveStatus('Live call failed: could not reach the local server.', true);
+      setLiveStatus('Could not reach the PackBack server. Check that it is still running, then try again.', true);
     } finally {
-      liveBtn.textContent = 'Run with Meta (live)';
+      liveBtn.textContent = LIVE_LABEL;
       liveBtn.disabled = !liveAvailable;
       $('#btn-extract').disabled = false;
     }
@@ -398,6 +416,7 @@
     const questionsC = $('#questions-container');
     const conflictsC = $('#conflicts-container');
     const limitationsC = $('#limitations-container');
+    const importDetails = $('#import-details');
 
     bannerC.innerHTML = '';
     invalidC.innerHTML = '';
@@ -407,11 +426,12 @@
     limitationsC.innerHTML = '';
 
     if (!result) {
+      importDetails.open = true;
       renderError(invalidC,
-        'No extraction result',
+        'Nothing to review yet',
         state.customImage
-          ? 'No seeded response for custom images. Import validated Meta JSON below.'
-          : 'Input was changed or no matching sample data found. Import validated Meta JSON below.'
+          ? 'Saved responses only match the test photo. Paste a Meta response below, or go back and use the test photo.'
+          : 'The notes changed, so no saved response matches them. Go back and build the bag record again, or paste a Meta response below.'
       );
       $('#questions-card').style.display = 'none';
       $('#conflicts-card').style.display = 'none';
@@ -420,6 +440,7 @@
       return;
     }
 
+    importDetails.open = false;
     $('#btn-to-confirm').disabled = false;
 
     const meta = state.extractionMeta;
@@ -428,15 +449,15 @@
         ? ['input_tokens', 'output_tokens', 'total_tokens'].filter(k => Number.isFinite(meta.usage[k])).map(k => k.replace('_tokens', '') + ' ' + meta.usage[k]).join(', ')
         : '';
       bannerC.innerHTML = `
-      <div class="sample-banner live-banner">
-        <span class="icon">[LIVE]</span>
-        Meta ${esc(meta.model)} response - ${esc(Math.round(meta.latencyMs / 100) / 10)}s${tok ? ', tokens: ' + esc(tok) : ''}. Model output is a proposal only; nothing is confirmed until you click.
+      <div class="notice live">
+        <strong>Live answer from Meta ${esc(meta.model)}</strong>
+        It took ${esc(Math.round(meta.latencyMs / 100) / 10)} seconds${tok ? ' and used these tokens: ' + esc(tok) : ''}. Meta only suggests. Nothing counts until you confirm it on the next screen.
       </div>`;
     } else {
       bannerC.innerHTML = `
-      <div class="sample-banner">
-        <span class="icon">[SAMPLE]</span>
-        Saved Meta test response / Sample mode - not a live API call
+      <div class="notice">
+        <strong>Saved Meta response, not a live call</strong>
+        This answer was recorded earlier from Meta muse-wonder-1.0. Meta only suggests. Nothing counts until you confirm it on the next screen.
       </div>`;
     }
 
@@ -446,39 +467,43 @@
       const hasConflict = reportValues.length > 1;
       const isMissing = !hasReports;
       let statusClass = 'reported';
-      let statusText = 'Reported';
-      if (hasConflict) { statusClass = 'conflict'; statusText = 'Conflict'; }
-      if (isMissing) { statusClass = 'missing-status'; statusText = 'Missing'; }
+      let statusText = 'Reported in notes';
+      if (hasConflict) { statusClass = 'conflict'; statusText = 'Counts disagree'; }
+      if (isMissing) { statusClass = 'missing-status'; statusText = 'No count found'; }
 
       let reportsHtml = '';
       if (hasReports) {
         reportsHtml = '<div class="bag-reports">' +
           bag.reports.map(r =>
             '<div class="report-row">' +
-            '<span>Qty: <strong>' + esc(r.value) + '</strong></span>' +
-            '<span>Evidence: ' + esc(r.evidence.join(', ')) + '</span>' +
+            '<span>Notes say <strong>' + esc(r.value) + '</strong></span>' +
+            '<span>from ' + esc(evList(r.evidence)) + '</span>' +
             '</div>'
           ).join('') +
           '</div>';
+      } else {
+        reportsHtml = '<div class="no-count">Your notes give no count for this bag. You will enter it yourself.</div>';
       }
 
       bagsC.innerHTML +=
         '<div class="bag-card ' + (hasConflict ? 'conflict' : isMissing ? 'missing' : '') + '">' +
           '<div class="bag-header">' +
-            '<span class="bag-id">Bag ' + esc(bag.id) + '</span>' +
+            '<span class="bag-id"><span class="visually-hidden">Bag </span>' + esc(bag.id) + '</span>' +
             '<span class="bag-status ' + statusClass + '">' + esc(statusText) + '</span>' +
           '</div>' +
-          '<div class="bag-detail">Suggested step (not confirmed): <strong>' + (bag.step !== null ? esc(bag.step) : 'None') + '</strong></div>' +
-          '<div class="bag-detail">Model confirmation proposal: <strong>' + (bag.model_confirmation_proposal !== null ? esc(bag.model_confirmation_proposal) : 'null (expected)') + '</strong></div>' +
-          '<div class="bag-detail">User confirmation required: <strong style="color:var(--primary)">Yes</strong></div>' +
+          '<div class="bag-detail">' + (bag.step !== null ? 'Meta suggests step <strong>' + esc(bag.step) + '</strong>' : 'Meta found no step for this bag') + '</div>' +
+          (bag.model_confirmation_proposal !== null && bag.model_confirmation_proposal !== undefined
+            ? '<div class="bag-detail">Meta proposed confirming <strong>' + esc(bag.model_confirmation_proposal) + '</strong>. That does not count. Only you can confirm.</div>'
+            : '') +
           reportsHtml +
+          '<div class="bag-detail">Not confirmed yet. You confirm on the next screen.</div>' +
         '</div>';
     });
 
     if (result.questions && result.questions.length > 0) {
       $('#questions-card').style.display = 'block';
       result.questions.forEach(q => {
-        questionsC.innerHTML += '<div class="question-item">' + esc(q) + '</div>';
+        questionsC.innerHTML += '<div class="question-item">' + esc(plainSteps(q)) + '</div>';
       });
     } else {
       $('#questions-card').style.display = 'none';
@@ -487,9 +512,13 @@
     if (result.conflicts && result.conflicts.length > 0) {
       $('#conflicts-card').style.display = 'block';
       result.conflicts.forEach(c => {
+        const bag = result.bags.find(b => b.id === c.bag);
+        const says = bag && bag.reports && bag.reports.length
+          ? bag.reports.map((r, i) => (i === 0 ? cap(evList(r.evidence)) : evList(r.evidence)) + ' says ' + r.value).join(', ')
+          : (c.reported_values || []).join(' and ');
         conflictsC.innerHTML +=
-          '<div class="question-item" style="border-left-color:var(--danger)">' +
-          'Bag ' + esc(c.bag) + ': reported values ' + esc((c.reported_values || []).join(' vs ')) + ' - unresolved' +
+          '<div class="question-item problem">' +
+          'Bag ' + esc(c.bag) + ': ' + esc(says) + '. Recount the bag. You settle this on the next screen.' +
           '</div>';
       });
     } else {
@@ -499,7 +528,7 @@
     if (result.visual_limitations && result.visual_limitations.length > 0) {
       $('#limitations-card').style.display = 'block';
       result.visual_limitations.forEach(l => {
-        limitationsC.innerHTML += '<div class="limitation-item">' + esc(l) + '</div>';
+        limitationsC.innerHTML += '<div class="limitation-item">' + esc(plainSteps(l)) + '</div>';
       });
     } else {
       $('#limitations-card').style.display = 'none';
@@ -508,11 +537,11 @@
 
   $('#btn-json-import').addEventListener('click', () => {
     const raw = $('#json-import-input').value.trim();
-    if (!raw) { toast('Please enter JSON'); return; }
+    if (!raw) { toast('Paste the JSON from Meta first.'); return; }
     let parsed;
-    try { parsed = JSON.parse(raw); } catch { toast('JSON parse error'); return; }
+    try { parsed = JSON.parse(raw); } catch { toast('That text is not valid JSON. Copy the whole response from Meta and paste it again.'); return; }
     const validated = validateMetaImport(parsed);
-    if (!validated.valid) { toast('Validation failed: ' + validated.error); return; }
+    if (!validated.valid) { toast('PackBack could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
     state.extractionResult = validated;
     state.extractionMeta = null;
     state.extractionInputHash = hashNotes(getCurrentNotes());
@@ -521,13 +550,13 @@
     stepMappings = {};
     saveState();
     logAction('json_imported', 'user paste');
-    toast('Meta JSON imported successfully');
+    toast('Meta response accepted.');
     renderReview();
   });
 
   $('#btn-back-input').addEventListener('click', () => goToStep('input'));
   $('#btn-to-confirm').addEventListener('click', () => {
-    if (!state.extractionResult) { toast('No extraction result'); return; }
+    if (!state.extractionResult) { toast('There is no bag record yet. Go back and build one.'); return; }
     buildRecordFromExtraction();
     goToStep('confirm');
   });
@@ -600,7 +629,7 @@
     mappingC.innerHTML = '';
 
     if (!ext || !currentRecord) {
-      renderError(container, 'No extraction result', 'Run extraction first.');
+      renderError(container, 'Nothing to confirm yet', 'Go back to Add steps and build the bag record first.');
       return;
     }
 
@@ -616,70 +645,58 @@
       const mappedStep = stepMappings[bag.id];
       const stepDefault = mappedStep != null ? mappedStep : bag.step;
       const stepSelect = '<select id="step-map-' + esc(bag.id) + '" data-map-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
-        '<option value="">Select step</option>' +
+        '<option value="">Choose a step</option>' +
         VALID_STEPS.map(st => '<option value="' + st + '"' + (stepDefault === st ? ' selected' : '') + '>Step ' + st + '</option>').join('') +
         '</select>';
 
       container.innerHTML +=
-        '<div class="bag-card ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : '') + '" id="confirm-bag-' + esc(bag.id) + '">' +
+        '<div class="bag-card ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : '') + (isConfirmed && lastConfirmedBag === bag.id ? ' just-confirmed' : '') + '" id="confirm-bag-' + esc(bag.id) + '">' +
           '<div class="bag-header">' +
-            '<span class="bag-id">Bag ' + esc(bag.id) + '</span>' +
+            '<span class="bag-id"><span class="visually-hidden">Bag </span>' + esc(bag.id) + '</span>' +
             '<span class="bag-status ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : 'reported') + '">' +
-              (isConfirmed ? 'Confirmed' : hasConflict ? 'Conflict unresolved' : 'Unconfirmed') +
+              (isConfirmed ? CHECK_SVG + 'Confirmed' : hasConflict ? 'Needs a recount' : 'Not confirmed yet') +
             '</span>' +
           '</div>' +
           (bag.reports.length > 0 ?
             '<div class="bag-reports">' +
               bag.reports.map(r =>
-                '<div class="report-row"><span>Reported: <strong>' + esc(r.value) + '</strong></span><span>' + esc(r.evidence.join(', ')) + '</span></div>'
+                '<div class="report-row"><span>Notes say <strong>' + esc(r.value) + '</strong></span><span>from ' + esc(evList(r.evidence)) + '</span></div>'
               ).join('') +
             '</div>'
-          : '<div class="bag-detail" style="color:var(--danger)">No reported quantity</div>') +
+          : '<div class="no-count">Your notes give no count for this bag. Count it and enter the number.</div>') +
+          (!isConfirmed && hasConflict ? '<div class="bag-detail">The notes disagree, so the box starts empty. Count the bag and enter what you find.</div>' : '') +
           '<div class="confirm-section">' +
-            '<label>Confirm quantity and step together (Bag ' + esc(bag.id) + ')</label>' +
-            '<div class="confirm-row">' +
-              '<input type="number" id="qty-' + esc(bag.id) + '" min="1" max="999" ' + (hasConflict && !isConfirmed ? 'value="" placeholder="Recount and enter"' : 'value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '"') + ' data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+            '<div class="field">' +
+              '<label for="qty-' + esc(bag.id) + '">Screws in bag ' + esc(bag.id) + '</label>' +
+              '<input type="number" inputmode="numeric" id="qty-' + esc(bag.id) + '" min="1" max="999" ' + (hasConflict && !isConfirmed ? 'value="" placeholder="Recount and enter"' : 'value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '"') + ' data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + ' aria-describedby="msg-' + esc(bag.id) + '">' +
+            '</div>' +
+            '<div class="field">' +
+              '<label for="step-map-' + esc(bag.id) + '">Put in at step</label>' +
               stepSelect +
-              '<button class="btn btn-primary btn-sm" data-confirm-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
-                (isConfirmed ? 'Confirmed' : 'Confirm') +
+            '</div>' +
+            '<div class="field-msg" id="msg-' + esc(bag.id) + '" role="alert"></div>' +
+            '<div class="confirm-buttons">' +
+              '<button type="button" class="btn btn-primary" data-confirm-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+                (isConfirmed ? 'Confirmed' : 'Confirm bag ' + esc(bag.id)) +
               '</button>' +
-              (isConfirmed ? '<button class="btn btn-outline btn-sm" data-revoke-bag="' + esc(bag.id) + '">Re-confirm</button>' : '') +
+              (isConfirmed ? '<button type="button" class="btn btn-outline" data-revoke-bag="' + esc(bag.id) + '">Change bag ' + esc(bag.id) + '</button>' : '') +
             '</div>' +
           '</div>' +
         '</div>';
     });
-
-    const hasMissingMapping = REQUIRED_BAGS.some(id => stepMappings[id] == null);
-    if (hasMissingMapping) {
-      mappingC.innerHTML =
-        '<div class="card missing" style="border-left:4px solid var(--danger)">' +
-          '<div class="card-title">Step Mapping Required</div>' +
-          '<div class="card-subtitle">Pick a step for each bag and click its Confirm button. The model step is only a suggestion.</div>' +
-          REQUIRED_BAGS.map(id => stepMappings[id] == null
-            ? '<div class="bag-detail">Bag ' + esc(id) + ': not confirmed</div>'
-            : '<div class="mapping-row"><span>Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</span><span class="bag-status confirmed" style="margin-left:8px">Mapped</span></div>'
-          ).join('') +
-        '</div>';
-    } else {
-      mappingC.innerHTML =
-        '<div class="card confirmed" style="border-left:4px solid var(--success)">' +
-          '<div class="card-title">Step Mapping Complete</div>' +
-          REQUIRED_BAGS.map(id =>
-            '<div class="bag-detail">Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</div>'
-          ).join('') +
-        '</div>';
-    }
+    lastConfirmedBag = null;
 
     if (unresolvedConflicts.length > 0) {
       conflictC.innerHTML =
-        '<div class="card conflict" style="border-left:4px solid var(--warning)">' +
-          '<div class="card-title">Conflict Resolution Required</div>' +
-          '<div class="card-subtitle">Confirming the quantity for a conflicted bag resolves its conflict automatically.</div>' +
-          unresolvedConflicts.map(c =>
-            '<div class="question-item" style="border-left-color:var(--danger)">' +
-            esc(c.fieldPath) + ': ' + c.reports.map(r => esc(r.value) + ' (' + esc(r.evidence.join(',')) + ')').join(' vs ') +
-            '</div>'
-          ).join('') +
+        '<div class="block">' +
+          '<h3>Counts that disagree</h3>' +
+          '<p class="hint">Confirming the count for one of these bags settles the disagreement.</p>' +
+          unresolvedConflicts.map(c => {
+            const m = /screws_([A-Za-z0-9]+)\./.exec(c.fieldPath);
+            return '<div class="question-item problem">' +
+              'Bag ' + esc(m ? m[1] : '?') + ': ' + c.reports.map((r, i) => (i === 0 ? cap(evList(r.evidence)) : evList(r.evidence)) + ' says ' + esc(r.value)).join(', ') +
+              '</div>';
+          }).join('') +
         '</div>';
     }
 
@@ -694,19 +711,23 @@
   });
 
   function doConfirm(bagId) {
-    if (!currentRecord) { toast('No record'); return; }
+    if (!currentRecord) { toast('There is no bag record yet. Go back and build one.'); return; }
     const input = $('#qty-' + bagId);
     if (!input) return;
     const val = parseInt(input.value, 10);
+    const msg = $('#msg-' + bagId);
+    if (msg) msg.textContent = '';
 
     if (!Number.isSafeInteger(val) || val < 1) {
-      toast('Quantity must be a positive integer (1 or more)');
+      if (msg) msg.textContent = 'Enter how many screws are in bag ' + bagId + ', as a whole number of 1 or more.';
+      input.focus();
       return;
     }
     const stepSel = $('#step-map-' + bagId);
     const stepVal = stepSel ? parseInt(stepSel.value, 10) : NaN;
     if (!VALID_STEPS.includes(stepVal)) {
-      toast('Please select a valid step (1-5) before confirming');
+      if (msg) msg.textContent = 'Choose the step you put bag ' + bagId + ' in, then confirm again.';
+      if (stepSel) stepSel.focus();
       return;
     }
 
@@ -729,7 +750,8 @@
     confirmations[bagId] = val;
     logAction('step_mapped', bagId + '=' + stepVal);
     logAction('quantity_confirmed', bagId + '=' + val);
-    toast('Bag ' + bagId + ': ' + val + ' confirmed');
+    lastConfirmedBag = bagId;
+    toast('Bag ' + bagId + ' confirmed: ' + val + ' screws, step ' + stepVal + '.');
     renderConfirm();
   }
 
@@ -765,7 +787,7 @@
 
     stepMappings = prevMappings;
     logAction('quantity_revoked', bagId);
-    toast('Bag ' + bagId + ': confirmation revoked');
+    toast('Bag ' + bagId + ' is open again. Confirm it when you have recounted.');
     renderConfirm();
   }
 
@@ -785,12 +807,12 @@
     const gateStatus = $('#gate-status');
     if (gateStatus) {
       const gates = [];
-      if (!allQtyConfirmed) gates.push('Quantities not confirmed');
-      if (!noConflicts) gates.push('Unresolved conflicts');
-      if (!allMapped) gates.push('Step mapping incomplete');
+      if (!allQtyConfirmed) gates.push('You confirm a count for every bag.');
+      if (!noConflicts) gates.push('You settle every count that disagrees.');
+      if (!allMapped) gates.push('You choose a step for every bag.');
       gateStatus.innerHTML = gates.length > 0
-        ? '<div class="gate-blocked">Blocked: ' + gates.map(g => esc(g)).join(', ') + '</div>'
-        : '<div class="gate-clear">All conditions met</div>';
+        ? '<div class="gate-blocked"><strong>The put-back reference stays locked until:</strong><ul>' + gates.map(g => '<li>' + esc(g) + '</li>').join('') + '</ul></div>'
+        : '<div class="gate-clear"><strong>All three bags are confirmed.</strong>You can continue to the put-back reference.</div>';
     }
   }
 
@@ -804,7 +826,7 @@
     const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
     const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null);
     if (!allQtyConfirmed || !noConflicts || !allMapped) {
-      toast('All bag quantities must be confirmed, conflicts resolved, and steps mapped');
+      toast('Confirm every bag, settle any disagreeing counts, and choose a step for each bag first.');
       return;
     }
     goToStep('reassembly');
@@ -815,7 +837,7 @@
     const content = $('#reassembly-content');
 
     if (!currentRecord) {
-      renderError(content, 'No confirmed record', 'Complete the confirmation step first.');
+      renderError(content, 'Nothing to put back yet', 'Go to Confirm and confirm every bag first.');
       return;
     }
 
@@ -826,14 +848,14 @@
 
     if (!allConfirmed || hasConflicts || !allMapped) {
       const reasons = [];
-      if (!allConfirmed) reasons.push('Not all bag quantities are confirmed.');
-      if (hasConflicts) reasons.push('There are unresolved conflicts.');
-      if (!allMapped) reasons.push('Step mapping is incomplete.');
+      if (!allConfirmed) reasons.push('Not every bag count is confirmed.');
+      if (hasConflicts) reasons.push('Some counts still disagree.');
+      if (!allMapped) reasons.push('Not every bag has a step.');
       content.innerHTML =
         '<div class="reassembly-blocked">' +
-          '<div class="blocked-icon">LOCKED</div>' +
-          '<div class="reason">' + reasons.map(r => esc(r)).join(' ') + '</div>' +
-          '<button class="btn btn-primary" onclick="document.querySelector(\'[data-step=confirm]\').click()">Go to Confirm</button>' +
+          '<div class="blocked-title">The put-back reference is locked</div>' +
+          '<div class="reason">' + reasons.map(r => esc(r)).join(' ') + ' Finish confirming to unlock it.</div>' +
+          '<button type="button" class="btn btn-primary" onclick="document.querySelector(\'[data-step=confirm]\').click()">Go to confirm</button>' +
         '</div>';
       return;
     }
@@ -842,75 +864,93 @@
     const refs = buildReassemblyRefs(currentRecord, state.extractionResult, stepMappings, state.editedNotes);
 
     content.innerHTML =
-      '<div class="card">' +
-        '<div class="card-title">Reassembly Reference (Reverse Order)</div>' +
-        '<div class="card-subtitle" style="color:var(--danger);font-weight:600">' +
-          'NOTICE: This is a reverse-order reference of the disassembly record. ' +
-          'It is not a mechanical assembly instruction or safety guarantee. ' +
-          'Torque, load, and structural safety are outside the scope of this app.' +
-        '</div>' +
+      '<div class="notice safety">' +
+        '<strong>This is not assembly instructions</strong>' +
+        'It replays the steps you recorded, last step first. It does not show that the furniture is safe to use. Tightness, load and stability are for you to check.' +
       '</div>' +
 
-      '<div class="card">' +
-        '<div class="card-title">Confirmed Parts</div>' +
+      '<h3>Bags you confirmed</h3>' +
+      '<div class="confirmed-bags">' +
         summary.parts.map(p =>
-          '<div class="bag-card confirmed" style="margin-bottom:8px">' +
-            '<div class="bag-header">' +
-              '<span class="bag-id">' + esc(p.storage) + '</span>' +
-              '<span class="bag-status confirmed">Confirmed</span>' +
-            '</div>' +
-            '<div class="bag-detail">Part: <strong>' + esc(p.name) + '</strong></div>' +
-            '<div class="bag-detail">Quantity: <strong>' + esc(p.quantity) + '</strong></div>' +
-            '<div class="bag-detail">Disassembly step: <strong>#' + esc(p.linkedStep) + '</strong></div>' +
+          '<div class="mini-bag">' +
+            '<span class="bag-id"><span class="visually-hidden">Bag </span>' + esc(String(p.storage).replace(/^Bag /, '')) + '</span>' +
+            '<span class="txt"><strong>' + esc(p.quantity) + ' screws</strong><br>put in at step ' + esc(p.linkedStep) + '</span>' +
           '</div>'
         ).join('') +
       '</div>' +
 
-      '<div class="card">' +
-        '<div class="card-title">Disassembly Steps (Reverse = Reassembly Order Reference)</div>' +
+      '<h3>Steps, last one first</h3>' +
+      '<ol class="reverse-list">' +
         refs.map((ref) =>
-          '<div class="reassembly-step">' +
-            '<span class="step-num">Ref ' + ref.refNumber + '</span>' +
-            '<span>' + esc(ref.originalNote) + '</span>' +
-            '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px">' +
-              'Original step ' + (ref.step.stepIndex + 1) + ' / Evidence: ' + esc(ref.step.evidence.join(', ')) +
+          '<li class="reassembly-step">' +
+            '<span class="step-num"><span class="visually-hidden">Step </span>' + esc(ref.step.stepIndex + 1) + '</span>' +
+            '<div>' +
+              '<div class="order">Put back ' + esc(ref.refNumber) + ' of ' + esc(refs.length) + '</div>' +
+              '<div class="note">' + esc(ref.originalNote) + '</div>' +
+              ref.lines.map(l =>
+                '<div class="ref-line ref-confirmed">' + esc(l.text) + '</div>' +
+                l.corrections.map(c =>
+                  '<div class="ref-correction">' + esc(c) + '</div>'
+                ).join('')
+              ).join('') +
             '</div>' +
-            ref.lines.map(l =>
-              '<div class="ref-confirmed" style="font-size:0.8rem;margin-top:4px">' + esc(l.text) + '</div>' +
-              l.corrections.map(c =>
-                '<div class="ref-correction" style="font-size:0.8rem;margin-top:4px;padding:4px 8px;background:#fff3cd;border-left:3px solid #d97706;color:#7a4a00;font-weight:600">' + esc(c) + '</div>'
-              ).join('')
-            ).join('') +
-          '</div>'
+          '</li>'
         ).join('') +
-      '</div>' +
+      '</ol>' +
 
-      '<div class="sample-banner" style="background:var(--danger)">' +
-        '<span class="icon">[!]</span> ' +
-        'safe: false - Confirmed quantities are not evidence of physical safety.' +
+      '<div class="notice safety" style="margin-top:20px">' +
+        '<strong>A confirmed count is not a safety check</strong>' +
+        'Confirming only shows that you counted the screws. It does not show the furniture is safe.' +
       '</div>';
   }
 
   $('#btn-back-confirm').addEventListener('click', () => goToStep('confirm'));
 
   // -- Step 5: History -------------------------------------------------
+  const ACTION_TEXT = {
+    scenario_changed: (d) => ['Chose a sample', SCENARIO_LABELS[d] || d],
+    image_uploaded: (d) => ['Chose your own photo', d],
+    extraction_seeded: (d) => ['Built the bag record from a saved Meta response', SCENARIO_LABELS[d] || d],
+    extraction_live: (d) => ['Built the bag record from a live Meta call', d],
+    live_failed: (d) => ['The live Meta call failed', d ? 'Reason: ' + d : ''],
+    live_rejected: (d) => ['PackBack rejected Meta\'s answer', d],
+    json_imported: () => ['Pasted a Meta response', ''],
+    record_built: (d) => ['Started the confirmation list', d],
+    step_mapped: (d) => { const m = /^(.+)=(\d+)$/.exec(d); return m ? ['Chose a step for bag ' + m[1], 'Step ' + m[2]] : ['Chose a step', d]; },
+    quantity_confirmed: (d) => { const m = /^(.+)=(\d+)$/.exec(d); return m ? ['Confirmed bag ' + m[1], m[2] + ' screws'] : ['Confirmed a bag', d]; },
+    quantity_revoked: (d) => ['Reopened bag ' + d, ''],
+  };
+  function friendlyReason(r) {
+    const t = String(r || '');
+    let m = /^User confirmed: (.+)$/.exec(t);
+    if (m) return 'You confirmed ' + m[1];
+    if (/^User step mapping/.test(t)) return 'You chose the step';
+    return /confirm/i.test(t) ? 'You confirmed it' : '';
+  }
+
   function renderHistory() {
     const container = $('#history-container');
     let items = [];
 
     state.actionLog.forEach(entry => {
-      items.push({ ts: entry.ts, action: entry.action, detail: entry.detail || '' });
+      const fn = ACTION_TEXT[entry.action];
+      const [action, detail] = fn ? fn(entry.detail || '') : [cap(String(entry.action).replace(/_/g, ' ')), entry.detail || ''];
+      items.push({ ts: entry.ts, action, detail });
     });
 
     if (currentRecord) {
       currentRecord._data.parts.forEach(part => {
+        const bagId = String(part.partId).replace(/^screws_/, '');
+        const fieldNames = { quantity: 'count', name: 'name', storage: 'bag', linkedStep: 'step' };
         ['quantity', 'name', 'storage', 'linkedStep'].forEach(field => {
           if (part[field] && part[field].history) {
             part[field].history.forEach(h => {
+              const prev = h.previousValue;
+              const was = (typeof prev === 'number' || typeof prev === 'string') && prev !== '' ? 'Was ' + prev : '';
               items.push({
                 ts: h.timestamp,
-                action: part.partId + '.' + field + ' changed',
-                detail: JSON.stringify(h.previousValue) + ' -> current (' + h.reason + ')'
+                action: 'Bag ' + bagId + ': ' + fieldNames[field] + ' changed',
+                detail: [was, friendlyReason(h.reason)].filter(Boolean).join('. ')
               });
             });
           }
@@ -918,10 +958,11 @@
       });
       currentRecord._data.conflicts.forEach(c => {
         if (c.resolution) {
+          const m = /screws_([A-Za-z0-9]+)\./.exec(c.fieldPath || '');
           items.push({
             ts: c.resolution.timestamp,
-            action: 'Conflict resolved: ' + c.conflictId,
-            detail: c.resolution.reason + ' -> ' + c.resolution.resolvedValue
+            action: (m ? 'Bag ' + m[1] + ': ' : '') + 'disagreement settled',
+            detail: friendlyReason(c.resolution.reason)
           });
         }
       });
@@ -930,7 +971,7 @@
     items.sort((a, b) => b.ts.localeCompare(a.ts));
 
     if (items.length === 0) {
-      container.innerHTML = '<p style="color:var(--text-secondary);padding:12px">No history</p>';
+      container.innerHTML = '<p class="empty">Nothing yet. Your actions show up here as you work.</p>';
       return;
     }
 
@@ -938,7 +979,7 @@
       '<div class="history-item">' +
         '<div class="ts">' + esc(formatTime(item.ts)) + '</div>' +
         '<div class="action">' + esc(item.action) + '</div>' +
-        '<div style="font-size:0.8125rem;color:var(--text-secondary)">' + esc(item.detail) + '</div>' +
+        (item.detail ? '<div class="detail">' + esc(item.detail) + '</div>' : '') +
       '</div>'
     ).join('');
   }
@@ -950,7 +991,7 @@
 
   // -- Reset -----------------------------------------------------------
   $('#btn-reset').addEventListener('click', () => {
-    if (!confirm('Reset all app data?')) return;
+    if (!confirm('Clear everything PackBack saved in this browser and start over?')) return;
     state = defaultState();
     currentRecord = null;
     confirmations = {};
@@ -958,7 +999,7 @@
     saveState();
     renderInput();
     goToStep('input');
-    toast('App data reset');
+    toast('Saved data cleared.');
   });
 
   // -- Helpers ---------------------------------------------------------

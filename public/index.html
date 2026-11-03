@@ -3,148 +3,156 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>PackBack - Disassembly Record Assistant</title>
+  <meta name="color-scheme" content="light">
+  <title>PackBack: a record of what is in each bag</title>
+  <link rel="preload" href="fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="app-header">
-    <h1>PackBack</h1>
-    <span class="badge" id="mode-badge">Sample Mode</span>
+    <h1 class="wordmark"><span>PackBack</span></h1>
+    <p class="mode" id="mode-badge">Using saved Meta responses</p>
   </header>
 
-  <main class="main">
-    <nav class="steps-nav" id="steps-nav">
-      <button data-step="input" class="active">1. Input</button>
-      <button data-step="review" disabled>2. Review</button>
-      <button data-step="confirm" disabled>3. Confirm</button>
-      <button data-step="reassembly" disabled>4. Reassembly</button>
-      <button data-step="history" disabled>5. History</button>
+  <main class="main" id="main">
+    <nav class="steps-nav" id="steps-nav" aria-label="Steps">
+      <button type="button" data-step="input" class="active"><span class="n">1</span><span class="t">Add steps</span></button>
+      <button type="button" data-step="review" disabled><span class="n">2</span><span class="t">Check</span></button>
+      <button type="button" data-step="confirm" disabled><span class="n">3</span><span class="t">Confirm</span></button>
+      <button type="button" data-step="reassembly" disabled><span class="n">4</span><span class="t">Put back</span></button>
+      <button type="button" data-step="history" disabled><span class="n">5</span><span class="t">Activity</span></button>
     </nav>
 
     <!-- STEP 1: Input -->
-    <section class="section active" id="section-input">
-      <div class="card">
-        <div class="card-title">Select Scenario</div>
-        <div class="card-subtitle">Demonstrates the flow with saved Meta test responses</div>
+    <section class="section active" id="section-input" aria-labelledby="h-input">
+      <h2 id="h-input">Record each step of taking it apart</h2>
+      <p class="intro">PackBack reads your step photos and one-line notes and asks Meta to draft what is in each labeled bag. Meta only suggests: you confirm every count, then get your steps in reverse order for putting it back.</p>
+
+      <div class="block" role="group" aria-labelledby="h-sample">
+        <h3 id="h-sample">Try a sample</h3>
+        <p class="hint">These are saved notes for the test photo. You can edit any note below.</p>
         <div class="scenario-bar" id="scenario-bar">
-          <button data-scenario="normal" class="active">Normal</button>
-          <button data-scenario="missing">Missing</button>
-          <button data-scenario="conflict">Conflict</button>
+          <button type="button" data-scenario="normal" class="active" aria-pressed="true">Normal</button>
+          <button type="button" data-scenario="missing" aria-pressed="false">Missing bag</button>
+          <button type="button" data-scenario="conflict" aria-pressed="false">Conflicting counts</button>
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Disassembly Photos</div>
-        <div class="card-subtitle">Synthetic 5-panel test image (local only) <span id="custom-image-badge" class="badge" style="display:none;background:var(--danger)">Custom</span></div>
-        <div class="image-upload-area" id="image-area">
-          <img id="preview-img" src="fixtures/synthetic-shelf.png" alt="Synthetic 5-panel disassembly photo">
+      <div class="input-grid">
+        <div class="block photo-block">
+          <h3 id="h-photo">Photo of your steps</h3>
+          <div class="image-upload-area" id="image-area">
+            <img id="preview-img" src="fixtures/synthetic-shelf.png" alt="Five numbered photos of a small wooden bookshelf being taken apart, with zip bags labeled A, B and C appearing in later photos">
+          </div>
+          <p class="hint" id="photo-caption">AI-generated test photo of a bookshelf taken apart in five steps. It is not a real disassembly. <span id="custom-image-badge" class="your-photo" hidden>You chose your own photo.</span></p>
+          <input type="file" id="image-input" accept="image/*" hidden aria-label="Choose a photo from your device">
+          <button type="button" class="btn btn-outline btn-sm" id="btn-change-image">Choose your own photo</button>
         </div>
-        <input type="file" id="image-input" accept="image/*" style="display:none">
-        <button class="btn btn-outline btn-sm" id="btn-change-image">Choose different image</button>
-      </div>
 
-      <div class="card">
-        <div class="card-title">Panel Notes</div>
-        <div class="card-subtitle">You can edit the notes for each disassembly step</div>
-        <div id="notes-container"></div>
-      </div>
+        <div class="notes-col">
+          <div class="block">
+            <h3 id="h-notes">Notes for each step</h3>
+            <p class="hint">One line per photo. Say which bag the screws went in and how many.</p>
+            <div id="notes-container"></div>
+          </div>
 
-      <div class="btn-group">
-        <button class="btn btn-primary btn-full" id="btn-extract">
-          Run Extraction (Saved Meta Response)
-        </button>
-        <button class="btn btn-outline btn-full" id="btn-live" disabled>Run with Meta (live)</button>
-        <div id="live-status" class="live-status" role="status" aria-live="polite"></div>
+          <div class="actions">
+            <button type="button" class="btn btn-primary" id="btn-extract">Build bag record from saved response</button>
+            <button type="button" class="btn btn-outline" id="btn-live" disabled>Build bag record with a live Meta call</button>
+            <div id="live-status" class="live-status" role="status" aria-live="polite"></div>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- STEP 2: Review -->
-    <section class="section" id="section-review">
+    <section class="section" id="section-review" aria-labelledby="h-review">
+      <h2 id="h-review">Check what Meta suggests</h2>
       <div id="sample-banner-container"></div>
-      <div id="invalidation-container"></div>
+      <div id="invalidation-container" role="status"></div>
 
-      <div class="card">
-        <div class="card-title">Extracted Bag Information</div>
-        <div class="card-subtitle">Model output - confirmed_quantity is always null (requires user confirmation)</div>
-        <div id="bags-container"></div>
+      <div class="block">
+        <h3 id="h-bags">Bags</h3>
+        <div id="bags-container" class="bag-row"></div>
       </div>
 
-      <div class="card" id="questions-card" style="display:none">
-        <div class="card-title">Model Questions</div>
-        <div id="questions-container"></div>
-      </div>
-
-      <div class="card" id="conflicts-card" style="display:none">
-        <div class="card-title">Conflicts Detected</div>
+      <div class="block" id="conflicts-card" style="display:none">
+        <h3>Counts that disagree</h3>
         <div id="conflicts-container"></div>
       </div>
 
-      <div class="card" id="limitations-card" style="display:none">
-        <div class="card-title">Visual Limitations</div>
-        <div id="limitations-container"></div>
-      </div>
+      <div class="two-col">
+        <div class="block" id="questions-card" style="display:none">
+          <h3>Questions from Meta</h3>
+          <div id="questions-container"></div>
+        </div>
 
-      <div class="btn-group">
-        <button class="btn btn-outline" id="btn-back-input">Back to Input</button>
-        <button class="btn btn-primary btn-full" id="btn-to-confirm" disabled>Proceed to Confirm</button>
-      </div>
-
-      <div class="card" style="margin-top:16px">
-        <div class="card-title">Import Meta JSON Directly</div>
-        <div class="card-subtitle">Paste validated JSON from modified input or external model output</div>
-        <div class="json-import-area">
-          <textarea id="json-import-input" placeholder='{"bags":[{"id":"A",...},{"id":"B",...},{"id":"C",...}],"safety_verified":false,...}'></textarea>
-          <button class="btn btn-outline btn-sm btn-full" id="btn-json-import" style="margin-top:8px">
-            Import and Validate JSON
-          </button>
+        <div class="block" id="limitations-card" style="display:none">
+          <h3>What Meta cannot see in the photo</h3>
+          <div id="limitations-container"></div>
         </div>
       </div>
+
+      <div class="actions row">
+        <button type="button" class="btn btn-outline" id="btn-back-input">Back to add steps</button>
+        <button type="button" class="btn btn-primary" id="btn-to-confirm" disabled>Continue to confirm</button>
+      </div>
+
+      <details class="block import" id="import-details">
+        <summary>Paste a Meta response instead</summary>
+        <div class="json-import-area">
+          <label for="json-import-input">Meta response (JSON)</label>
+          <p class="hint" id="json-hint">Use this for your own photo, or to check a response you got from Meta yourself. PackBack checks it before using it.</p>
+          <textarea id="json-import-input" rows="6" aria-describedby="json-hint" placeholder="Paste the JSON that Meta returned"></textarea>
+          <button type="button" class="btn btn-outline btn-sm" id="btn-json-import">Check and use this response</button>
+        </div>
+      </details>
     </section>
 
     <!-- STEP 3: Confirm -->
-    <section class="section" id="section-confirm">
-      <div class="card">
-        <div class="card-title">Confirm A/B/C Quantities</div>
-        <div class="card-subtitle">Confirm the quantity in each bag manually. Only explicit button clicks count as confirmation.</div>
-        <div id="confirm-bags-container"></div>
-      </div>
+    <section class="section" id="section-confirm" aria-labelledby="h-confirm">
+      <h2 id="h-confirm">Confirm each bag</h2>
+      <p class="intro">Count the screws in each bag yourself, then enter the number and the step you put them in. A bag counts as confirmed only when you press its Confirm button.</p>
+
+      <div id="confirm-bags-container" class="bag-row"></div>
 
       <div id="confirm-mappings-container"></div>
       <div id="confirm-conflicts-container"></div>
 
-      <div id="gate-status" style="margin:8px 0"></div>
+      <div id="gate-status" role="status" aria-live="polite"></div>
 
-      <div class="btn-group">
-        <button class="btn btn-outline" id="btn-back-review">Back to Review</button>
-        <button class="btn btn-primary btn-full" id="btn-to-reassembly" disabled>Proceed to Reassembly</button>
+      <div class="actions row">
+        <button type="button" class="btn btn-outline" id="btn-back-review">Back to check</button>
+        <button type="button" class="btn btn-primary" id="btn-to-reassembly" disabled>Continue to put back</button>
       </div>
     </section>
 
     <!-- STEP 4: Reassembly -->
-    <section class="section" id="section-reassembly">
+    <section class="section" id="section-reassembly" aria-labelledby="h-reassembly">
+      <h2 id="h-reassembly">Put it back: your steps in reverse</h2>
       <div id="reassembly-content"></div>
-      <div class="btn-group">
-        <button class="btn btn-outline" id="btn-back-confirm">Back to Confirm</button>
+      <div class="actions row">
+        <button type="button" class="btn btn-outline" id="btn-back-confirm">Back to confirm</button>
       </div>
     </section>
 
     <!-- STEP 5: History -->
-    <section class="section" id="section-history">
-      <div class="card">
-        <div class="card-title">Change History</div>
-        <div id="history-container"></div>
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-outline" id="btn-back-from-history">Back to Current State</button>
+    <section class="section" id="section-history" aria-labelledby="h-history">
+      <h2 id="h-history">Activity</h2>
+      <p class="hint">What you and PackBack did in this browser, newest first.</p>
+      <div id="history-container"></div>
+      <div class="actions row">
+        <button type="button" class="btn btn-outline" id="btn-back-from-history">Back to where you were</button>
       </div>
     </section>
 
     <div class="reset-area">
-      <button class="btn btn-danger btn-sm" id="btn-reset">Reset App Data</button>
+      <button type="button" class="btn btn-quiet btn-sm" id="btn-reset">Clear saved data and start over</button>
     </div>
   </main>
 
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="record-browser.js"></script>
   <script src="sample-data.js"></script>
