@@ -130,22 +130,25 @@ describe('live extraction with 2 to 12 steps and any bag set', () => {
     });
     assert.equal(calls.length, 0);
   });
-  it('a bag the notes do not mention is rejected, and so is a missing one', async () => {
+  it('a bag Meta returns that the notes do not name is kept and flagged; a bag the notes name that Meta omits is added', async () => {
     const notes = notesOf(['Put 3 screws in bag A.', 'Put 2 screws in bag B.']);
     const extra = await run(notes, prop([bag('A', 3, 1), bag('B', 2, 2), bag('C', null, null)]));
-    assert.equal(extra.status, 502);
-    assert.equal(extra.j.error.code, 'schema_invalid');
-    assert.match(extra.j.error.message, /Extra bag C/);
+    assert.equal(extra.status, 200);
+    assert.equal(extra.j.proposal.bags.find(b => b.id === 'C').note_matched, false);
+    assert.equal(extra.j.proposal.bags.find(b => b.id === 'A').note_matched, true);
     const missing = await run(notes, prop([bag('A', 3, 1)]));
-    assert.equal(missing.status, 502);
-    assert.match(missing.j.error.message, /Missing bag B/);
+    assert.equal(missing.status, 200);
+    const b = missing.j.proposal.bags.find(x => x.id === 'B');
+    assert.deepEqual(b.reports.map(r => [r.value, r.supported]), [[2, true]]);
   });
-  it('notes with no bag letters: only an empty bag list passes', async () => {
+  it('notes with no bag letters: empty list passes, a Meta-found bag is kept and flagged', async () => {
     const notes = notesOf(['Removed the lid.', 'Removed the fan.']);
     assert.equal((await run(notes, prop([]))).status, 200);
-    assert.equal((await run(notes, prop([bag('A', null, null)]))).status, 502);
+    const r = await run(notes, prop([bag('A', null, null)]));
+    assert.equal(r.status, 200);
+    assert.equal(r.j.proposal.bags[0].note_matched, false);
   });
-  it('step beyond the record is rejected', async () => {
+  it('step beyond the record is still rejected', async () => {
     const notes = notesOf(['Put 3 screws in bag A.', 'Done.']);
     assert.equal((await run(notes, prop([bag('A', 3, 5)]))).status, 502);
   });
@@ -156,13 +159,15 @@ describe('live extraction with 2 to 12 steps and any bag set', () => {
     assert.deepEqual(j.proposal.bags[0].reports[0].evidence, ['step1']);
     assert.deepEqual(j.proposal.bags[0].evidence, ['step1']);
   });
-  it('a quantity cited to a step that does not state it is rejected', async () => {
+  it('a quantity cited to a step that does not state it is kept as unsupported; a nonexistent step is dropped', async () => {
     const notes = notesOf(['Put 3 screws in bag A.', 'Done.']);
     const r = await run(notes, prop([bag('A', 3, 2)]));
-    assert.equal(r.status, 502);
-    assert.equal(r.j.error.detail, 'unsupported_quantity');
+    assert.equal(r.status, 200);
+    const rep = r.j.proposal.bags[0].reports.find(x => x.evidence.includes('step2'));
+    assert.equal(rep.supported, false);
     const out = await run(notes, prop([bag('A', 3, 1, 'step9')]));
-    assert.equal(out.j.error.detail, 'unsupported_quantity');
+    assert.equal(out.status, 200);
+    assert.ok(!out.j.proposal.bags[0].reports.some(x => x.evidence.includes('step9')));
   });
   it('conflicts are derived across more than three bags', async () => {
     const notes = notesOf(['Put 3 screws in bag D.', 'Bag D has 5 screws.', 'Done.']);

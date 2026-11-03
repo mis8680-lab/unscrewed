@@ -63,12 +63,15 @@ const MAX_STEPS = 12;
  * The word is matched without regard to case; the letter must be an upper-case A to H on its own.
  */
 const BAG_HEAD_RE = /(?<![A-Za-z])bags?[\s\-#:]*([A-Ha-h])(?![A-Za-z0-9])/gi;
-const BAG_CONT_RE = /\s*(?:(?:[\/,&]|and\b|or\b)|(-|\u2013|to\b))\s*([A-Ha-h])(?![A-Za-z0-9])/y;
+const BAG_CONT_RE = /\s*(?:(?:[\/,&]|and\b|or\b)|(-|\u2013|to\b|through\b|thru\b))\s*([A-Ha-h])(?![A-Za-z0-9])/y;
+// Spoken order: "the b bag", "the A bag".
+const BAG_TAIL_RE = /(?<![A-Za-z])the\s+([A-Ha-h])\s+bags?\b/gi;
 // A lowercase "a" right after "bag" is a letter only when what follows cannot make it an article.
-const LOWER_A_OK = /^(?:\s*(?:[,;:.!?)\/&\-\u2013=]|$)|\s+(?:and|or|to|is|are|was|has|have|had|holds?|contains?|with|each|total|screws?|bolts?|fasteners?|washers?|nuts?|dowels?|\d))/i;
+const LOWER_A_OK = /^(?:\s*(?:[,;:.!?)\/&\-\u2013=]|$)|\s+(?:and|or|to|through|thru|is|are|was|has|have|had|holds?|contains?|with|each|total|again|too|also|there|here|now|got|went|came|only|full|empty|two|three|four|five|six|seven|eight|nine|ten|screws|bolts|fasteners|washers|nuts|dowels|\d))/i;
 function letterOk(ch, rest) { return ch !== 'a' || LOWER_A_OK.test(rest); }
 /** Sentences of a text: split after . ! ? ; and on newlines. */
-function sentencesOf(text) { return String(text).normalize('NFKC').split(/(?<=[.;!?])\s+|\s*\n\s*/).filter(x => x.trim()); }
+// "No. 8" and "Fig. 4" are not sentence ends.
+function sentencesOf(text) { return String(text).normalize('NFKC').split(/(?<=[.;!?])(?<!\b(?:no|nos|fig|figs|approx|vs|etc|pt)\.)\s+|\s*\n\s*/i).filter(x => x.trim()); }
 function bagLettersInSentence(sentence) {
   const found = new Set();
   const re = new RegExp(BAG_HEAD_RE.source, 'gi');
@@ -88,6 +91,9 @@ function bagLettersInSentence(sentence) {
       last = next; pos += cm[0].length; re.lastIndex = pos;
     }
   }
+  const tail = new RegExp(BAG_TAIL_RE.source, 'gi');
+  let t;
+  while ((t = tail.exec(sentence)) !== null) found.add(t[1].toUpperCase());
   return [...found];
 }
 function bagLettersInText(text) {
@@ -99,7 +105,7 @@ function bagLettersInText(text) {
 function clausesOf(text) {
   const out = [];
   for (const sen of sentencesOf(text)) {
-    const parts = sen.split(/\s*,\s*|\s+and\s+/i);
+    const parts = sen.split(/\s*,\s*|\s+and\s+/i).flatMap(p => p.split(new RegExp('\\s+(?=(?:\\d+|' + NUMW_SOURCE + ')\\s+(?:in|into)\\s+bags?\\b)', 'i'))).filter(x => x !== undefined && x !== '');
     let cur = '';
     for (const p of parts) {
       if (cur && bagLettersInSentence(p).length && bagLettersInSentence(cur).length) { out.push(cur); cur = p; }
@@ -119,11 +125,10 @@ function bagLettersFromNotes(notes) {
   return [...found].sort();
 }
 
-/** True when the notes talk about screws, bolts or fasteners. Used to ask for bag labels before a live call. */
+/** True when the notes talk about screws, bolts or fasteners. Used to explain an answer with no bags. */
 function notesMentionFasteners(notes) {
   return (Array.isArray(notes) ? notes : []).some(n => /\b(?:screws?|bolts?|fasteners?)\b/i.test(String(n && n.note != null ? n.note : '').normalize('NFKC')));
 }
-const UNLABELED_BAGS_MESSAGE = 'Your notes mention screws but no bag letter. Label the bags using the letters A to H (for example "bag A") and try again.';
 
 // ---- Quantities stated in notes ------------------------------------------------------
 const NW_ONES = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
@@ -170,6 +175,7 @@ function quantitiesInNote(text) {
     add(m[1], m.index + m[0].indexOf(m[1]));
   }
   for (const m of t.matchAll(new RegExp('\\b(?:holds?|has|have|contains?)\\s+' + NUM_SOURCE + '(?=\\s*(?:[.,;!?]|$)|\\s+(?:each|total|in total|pieces?|items?)\\b)', 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
+  for (const m of t.matchAll(new RegExp(NUM_SOURCE + '\\s+of\\s+(?:them|these|those|it)\\b', 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
   for (const m of t.matchAll(new RegExp(NUM_SOURCE + '\\s+(?:of them\\s+)?(?:in|into|for)\\s+bags?\\b', 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
   for (const m of t.matchAll(new RegExp('\\bbags?[\\s\\-#]*[A-H]\\s*[:=]\\s*' + NUM_SOURCE, 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
   return out;
@@ -200,43 +206,73 @@ function deriveNoteQuantities(notes) {
 }
 
 /**
- * Cross-check a validated import against the notes, add note-derived reports, recompute conflicts.
- * Every cited step must exist and its note must state the reported quantity. Evidence becomes stepN.
- * Throws an Error with code "unsupported_quantity" when a report is not backed by its cited note.
+ * Fail-soft cross-check of a validated import against the notes. Never rejects an answer.
+ *  - A report that cites a step that does not exist is dropped.
+ *  - Each remaining report gets supported:true when its cited note states that number for the bag, else
+ *    supported:false (shown as "Check it", never used to prefill, never settles a conflict).
+ *  - Bags come from Meta unioned with the bags the notes name. A bag Meta returned that the notes do not
+ *    name gets noteMatched:false.
+ *  - Note-derived quantities are added as supported reports. Conflicts: any two different numbers for a
+ *    bag, from any source.
+ * Evidence becomes stepN.
  */
 function crossCheckAndDerive(v, notes) {
   const byStep = new Map(notes.map(n => [n.panel, n.note]));
-  const unsupported = () => { const e = new Error('a reported quantity is not supported by the notes'); e.code = 'unsupported_quantity'; return e; };
+  const fromNotes = bagLettersFromNotes(notes);
   for (const bag of v.bags) {
+    bag.noteMatched = fromNotes.includes(bag.id);
+    const kept = [];
     for (const r of bag.reports) {
-      for (const ev of r.evidence) {
-        const n = evidenceStepNumber(ev);
-        if (n === null || !byStep.has(n) || !noteSupportsQuantity(byStep.get(n), r.value, bag.id)) throw unsupported();
-      }
-      r.evidence = r.evidence.map(e => 'step' + evidenceStepNumber(e));
+      const steps = r.evidence.map(evidenceStepNumber).filter(n => n !== null && byStep.has(n));
+      if (!steps.length) continue; // evidence points to a step that does not exist
+      r.evidence = [...new Set(steps)].map(n => 'step' + n);
+      r.supported = steps.every(n => noteSupportsQuantity(byStep.get(n), r.value, bag.id));
+      kept.push(r);
     }
+    bag.reports = kept;
     bag.evidence = (bag.evidence || []).map(e => { const n = evidenceStepNumber(e); return n === null ? e : 'step' + n; });
   }
+  for (const id of fromNotes) {
+    if (!v.bags.some(b => b.id === id) && v.bags.length < ALL_BAG_IDS.length) {
+      v.bags.push({ id, reports: [], step: null, evidence: [], confirmed_quantity: null, model_confirmation_proposal: null, requires_user_event: true, noteMatched: true });
+    }
+  }
+  v.bags.sort((x, y) => (x.id < y.id ? -1 : 1));
   const derived = deriveNoteQuantities(notes);
   for (const bag of v.bags) {
     const vals = derived[bag.id];
-    if (!vals || vals.size < 2) continue;
+    if (!vals) continue;
     for (const [value, panels] of vals) {
       for (const p of panels) {
         const ev = 'step' + p;
-        if (!bag.reports.some(r => r.value === value && r.evidence.includes(ev))) bag.reports.push({ value, evidence: [ev] });
+        const same = bag.reports.find(r => r.value === value && r.evidence.includes(ev));
+        if (same) same.supported = true;
+        else bag.reports.push({ value, evidence: [ev], supported: true });
       }
     }
   }
   v.conflicts = [];
   for (const bag of v.bags) {
-    const unique = [...new Set(bag.reports.map(r => r.value))];
-    if (unique.length > 1) {
-      v.conflicts.push({ bag: bag.id, reported_values: unique, evidence: bag.reports.flatMap(r => r.evidence), status: 'unresolved', resolution: null });
+    if (bagHasConflict(bag)) {
+      v.conflicts.push({ bag: bag.id, reported_values: [...new Set(bag.reports.map(r => r.value))], evidence: bag.reports.flatMap(r => r.evidence), status: 'unresolved', resolution: null });
     }
   }
   return v;
 }
+
+/** A report counts as notes-backed unless it is explicitly marked unsupported (older saved drafts have no mark). */
+function reportSupported(r) { return !r || r.supported !== false; }
+/** Two different numbers from any source mean the bag needs a recount. */
+function bagHasConflict(bag) { return new Set((bag.reports || []).map(r => r.value)).size > 1; }
+/** The number to prefill the confirm box with, or null. Only when every supported report agrees and there is at least one, and no other number exists. */
+function bagPrefill(bag) {
+  const reports = bag.reports || [];
+  const supported = reports.filter(reportSupported);
+  if (!supported.length || bagHasConflict(bag)) return null;
+  return supported[0].value;
+}
+const BAG_CHECK_MESSAGE = "Check this bag: Meta found it in your notes but we couldn't match the exact words.";
+const NO_BAGS_MESSAGE = "Meta didn't find any labeled bags. Label your bags A to H in the notes, or say 'bag A' when you record.";
 
 const OBS_MAX_PER_STEP = 3;
 const OBS_MAX_CHARS = 140;
@@ -332,7 +368,7 @@ function validateMetaImport(raw, opts) {
   if (raw.bags.length > ALL_BAG_IDS.length) {
     return { valid: false, error: 'At most ' + ALL_BAG_IDS.length + ' bags (A to H) are allowed (got ' + raw.bags.length + ')' };
   }
-  if (!expected && raw.bags.length < 1) {
+  if (!expected && !o.failSoft && raw.bags.length < 1) {
     return { valid: false, error: 'At least one bag is required (got 0)' };
   }
 
@@ -370,7 +406,7 @@ function validateMetaImport(raw, opts) {
       };
     });
 
-    if (expected) {
+    if (expected && !o.failSoft) {
       const got = [...ids].sort();
       const missing = expected.filter(x => !ids.has(x));
       const extra = got.filter(x => !expected.includes(x));

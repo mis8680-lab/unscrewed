@@ -597,7 +597,6 @@
     if (!liveAvailable || liveBtn.disabled) return;
     const notes = getCurrentNotes();
     const body = { notes };
-    if (!bagLettersFromNotes(notes).length && notesMentionFasteners(notes)) { setLiveStatus(UNLABELED_BAGS_MESSAGE, true); return; }
     if (isCustom()) {
       const images = [];
       for (let i = 0; i < state.customSteps.length; i++) {
@@ -627,8 +626,8 @@
         logAction('live_rejected', validated.error);
         return;
       }
-      try { crossCheckAndDerive(validated, notes); }
-      catch { setLiveStatus('Unscrewed rejected Meta\'s answer: a quantity or step it cites is not in your notes. Try the live call again.', true); logAction('live_rejected', 'unsupported_quantity'); return; }
+      crossCheckAndDerive(validated, notes);
+      if (!validated.bags.length && notesMentionFasteners(notes)) { setLiveStatus(NO_BAGS_MESSAGE, true); logAction('live_no_bags', 'none found'); return; }
       state.extractionResult = validated;
       state.extractionMeta = { mode: 'live', model: String(j.model), latencyMs: Number(j.latencyMs) || 0, usage: j.usage && typeof j.usage === 'object' ? j.usage : null };
       state.extractionInputHash = hashNotes(notes);
@@ -716,23 +715,18 @@
 
     result.bags.forEach(bag => {
       const hasReports = bag.reports && bag.reports.length > 0;
-      const reportValues = hasReports ? [...new Set(bag.reports.map(r => r.value))] : [];
-      const hasConflict = reportValues.length > 1;
+      const hasConflict = bagHasConflict(bag);
       const isMissing = !hasReports;
       let statusClass = 'reported';
       let statusText = 'Reported in notes';
+      if (hasReports && !bag.reports.some(reportSupported)) { statusText = 'Check this number'; }
       if (hasConflict) { statusClass = 'conflict'; statusText = 'Counts disagree'; }
       if (isMissing) { statusClass = 'missing-status'; statusText = 'No count found'; }
 
       let reportsHtml = '';
       if (hasReports) {
         reportsHtml = '<div class="bag-reports">' +
-          bag.reports.map(r =>
-            '<div class="report-row">' +
-            '<span>Notes say <strong>' + esc(r.value) + '</strong></span>' +
-            '<span>from ' + esc(evList(r.evidence)) + '</span>' +
-            '</div>'
-          ).join('') +
+          bag.reports.map(reportRowHtml).join('') +
           '</div>';
       } else {
         reportsHtml = '<div class="no-count">Your notes give no count for this bag. You will enter it yourself.</div>';
@@ -745,6 +739,7 @@
             '<span class="bag-status ' + statusClass + '">' + esc(statusText) + '</span>' +
           '</div>' +
           '<div class="bag-detail">' + (bag.step !== null ? 'Meta suggests step <strong>' + esc(bag.step) + '</strong>' : 'Meta found no step for this bag') + '</div>' +
+          (bag.noteMatched === false ? '<div class="bag-detail check-note">' + esc(BAG_CHECK_MESSAGE) + '</div>' : '') +
           (bag.model_confirmation_proposal !== null && bag.model_confirmation_proposal !== undefined
             ? '<div class="bag-detail">Meta proposed confirming <strong>' + esc(bag.model_confirmation_proposal) + '</strong>. That does not count. Only you can confirm.</div>'
             : '') +
@@ -809,9 +804,9 @@
     const pasteNotes = getCurrentNotes();
     const validated = validateMetaImport(parsed, importOpts(pasteNotes));
     if (!validated.valid) { toast('Unscrewed could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
-    // Same check the live path gets: every cited step must exist and its note must state the quantity.
-    try { crossCheckAndDerive(validated, pasteNotes); }
-    catch { toast('Unscrewed could not use that response: a quantity or step it cites is not in your notes. Fix it and try again.'); return; }
+    // Same fail-soft check the live path gets: unsupported numbers stay visible as "check it".
+    crossCheckAndDerive(validated, pasteNotes);
+    if (!validated.bags.length && notesMentionFasteners(pasteNotes)) { toast(NO_BAGS_MESSAGE); return; }
     state.extractionResult = validated;
     state.extractionMeta = null;
     state.extractionInputHash = hashNotes(getCurrentNotes());
@@ -848,7 +843,8 @@
     });
 
     ext.bags.forEach(bag => {
-      const firstReport = bag.reports[0];
+      const pre = bagPrefill(bag);
+      const firstReport = pre === null ? null : bag.reports.find(r => reportSupported(r) && r.value === pre);
       const qty = firstReport ? firstReport.value : null;
       const ev = firstReport ? firstReport.evidence : [];
 
@@ -914,7 +910,8 @@
       const isConfirmed = part && part.quantity.source === 'user_confirmed';
       const confirmedVal = confirmations[bag.id];
       const hasConflict = unresolvedConflicts.some(c => c.fieldPath === 'parts.' + partId + '.quantity');
-      const defaultVal = bag.reports[0]?.value ?? '';
+      const defaultVal = bagPrefill(bag) ?? '';
+      const emptyBox = defaultVal === '';
       const mappedStep = stepMappings[bag.id];
       const stepDefault = mappedStep != null ? mappedStep : bag.step;
       const stepSelect = '<select id="step-map-' + esc(bag.id) + '" data-map-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
@@ -932,16 +929,15 @@
           '</div>' +
           (bag.reports.length > 0 ?
             '<div class="bag-reports">' +
-              bag.reports.map(r =>
-                '<div class="report-row"><span>Notes say <strong>' + esc(r.value) + '</strong></span><span>from ' + esc(evList(r.evidence)) + '</span></div>'
-              ).join('') +
+              bag.reports.map(reportRowHtml).join('') +
             '</div>'
           : '<div class="no-count">Your notes give no count for this bag. Count it and enter the number.</div>') +
-          (!isConfirmed && hasConflict ? '<div class="bag-detail">The notes disagree, so the box starts empty. Count the bag and enter what you find.</div>' : '') +
+          (bag.noteMatched === false ? '<div class="bag-detail check-note">' + esc(BAG_CHECK_MESSAGE) + '</div>' : '') +
+          (!isConfirmed && hasConflict ? '<div class="bag-detail">The numbers disagree, so the box starts empty. Count the bag and enter what you find.</div>' : (!isConfirmed && emptyBox && bag.reports.length ? '<div class="bag-detail">We could not match a number to your notes, so the box starts empty. Count the bag and enter what you find.</div>' : '')) +
           '<div class="confirm-section">' +
             '<div class="field">' +
               '<label for="qty-' + esc(bag.id) + '">Screws in bag ' + esc(bag.id) + '</label>' +
-              '<input type="number" inputmode="numeric" id="qty-' + esc(bag.id) + '" min="1" max="999" ' + (hasConflict && !isConfirmed ? 'value="" placeholder="Recount and enter"' : 'value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '"') + ' data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + ' aria-describedby="msg-' + esc(bag.id) + '">' +
+              '<input type="number" inputmode="numeric" id="qty-' + esc(bag.id) + '" min="1" max="999" ' + ((hasConflict || emptyBox) && !isConfirmed ? 'value="" placeholder="Recount and enter"' : 'value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '"') + ' data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + ' aria-describedby="msg-' + esc(bag.id) + '">' +
             '</div>' +
             '<div class="field">' +
               '<label for="step-map-' + esc(bag.id) + '">Put in at step</label>' +
@@ -1288,6 +1284,11 @@
   });
 
   // -- Helpers ---------------------------------------------------------
+  function reportRowHtml(r) {
+    return reportSupported(r)
+      ? '<div class="report-row"><span>Notes say <strong>' + esc(r.value) + '</strong></span><span>from ' + esc(evList(r.evidence)) + '</span></div>'
+      : '<div class="report-row unsupported"><span>Meta read <strong>' + esc(r.value) + '</strong> from ' + esc(evList(r.evidence)) + '. We couldn\'t find that number in your note. Check it.</span></div>';
+  }
   function bagIds() { return state.extractionResult ? state.extractionResult.bags.map(b => b.id) : []; }
   function stepCountNow() {
     const e = state.extractionResult;
@@ -1295,7 +1296,7 @@
   }
   function validSteps() { return Array.from({ length: stepCountNow() }, (_, i) => i + 1); }
   // The bags in any answer must match the bag letters the notes mention.
-  function importOpts(notes) { return { expectedBags: bagLettersFromNotes(notes), stepCount: notes.length }; }
+  function importOpts(notes) { return { expectedBags: bagLettersFromNotes(notes), stepCount: notes.length, failSoft: true }; }
 
   function getCurrentNotes() {
     const textareas = $$('#notes-container textarea');

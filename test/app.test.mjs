@@ -579,10 +579,10 @@ describe('buildReassemblyRefs', () => {
 describe('Regression: conflicted bag quantity input and mobile nav', () => {
   const appSrc = readFileSync(join(PUBLIC, 'app.js'), 'utf8');
   it('conflicted bag input starts empty with recount placeholder', () => {
-    assert.ok(appSrc.includes('hasConflict && !isConfirmed ? \'value="" placeholder="Recount and enter"\''));
+    assert.ok(appSrc.includes('(hasConflict || emptyBox) && !isConfirmed ? \'value="" placeholder="Recount and enter"\''));
   });
   it('prefill only applies to non-conflicted bags', () => {
-    const i = appSrc.indexOf('hasConflict && !isConfirmed');
+    const i = appSrc.indexOf('(hasConflict || emptyBox) && !isConfirmed');
     assert.ok(i > 0);
     assert.ok(appSrc.slice(i, i + 300).includes('defaultVal'));
   });

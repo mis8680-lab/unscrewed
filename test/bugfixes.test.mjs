@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { encodeWav16 } = require('../public/voice.js');
 const read = (f) => readFileSync(new URL('../public/' + f, import.meta.url), 'utf8');
 const rules = new Function('structuredClone', `${read('sample-data.js')}
-return { bagLettersFromNotes, validateMetaImport, observationHasFastenerCount, sanitizeObservations, notesMentionFasteners, crossCheckAndDerive, deriveNoteQuantities, noteSupportsQuantity, quantitiesInNote, numberFromToken, UNLABELED_BAGS_MESSAGE };`)(structuredClone);
+return { bagLettersFromNotes, validateMetaImport, observationHasFastenerCount, sanitizeObservations, notesMentionFasteners, crossCheckAndDerive, deriveNoteQuantities, noteSupportsQuantity, quantitiesInNote, numberFromToken, bagPrefill, bagHasConflict, NO_BAGS_MESSAGE };`)(structuredClone);
 const persist = new Function(`${read('persist.js')}\nreturn { persistState, isRestorableResult, PHOTOS_TOO_LARGE_MESSAGE };`)();
 const notesOf = (arr) => arr.map((note, i) => ({ panel: i + 1, note }));
 const appSrc = read('app.js');
@@ -29,7 +29,7 @@ const asr = () => { const calls = []; return { calls, fetchImpl: async (u, i) =>
 
 // Minimal validated import shape for one or more bags.
 const imp = (bags) => ({ safety_verified: false, bags: bags.map(([id, value, ev]) => ({ id, reported_quantities: value == null ? [] : [{ value, evidence: ev }], step: null, evidence: [], confirmed_quantity: null })), questions: [], visual_limitations: [] });
-const check = (raw, notes) => { const v = rules.validateMetaImport(raw, { expectedBags: rules.bagLettersFromNotes(notes), stepCount: notes.length }); assert.ok(v.valid, v.error); return rules.crossCheckAndDerive(v, notes); };
+const check = (raw, notes) => { const v = rules.validateMetaImport(raw, { expectedBags: rules.bagLettersFromNotes(notes), stepCount: notes.length, failSoft: true }); assert.ok(v.valid, v.error); return rules.crossCheckAndDerive(v, notes); };
 
 describe('P1: Add step keeps the list and the numbering aligned', () => {
   it('adding a step re-renders, then focuses and scrolls to the new step note', () => {
@@ -86,17 +86,11 @@ describe('G1: zero bags and bag letter spellings', () => {
     assert.equal(rules.notesMentionFasteners(notesOf(['Removed the fasteners'])), true);
     assert.equal(rules.notesMentionFasteners(notesOf(['Removed the shelf.'])), false);
   });
-  it('live extraction is blocked, with no model call, when screws are mentioned but no bag is labeled', async () => {
-    const calls = [];
-    await withServer({ fetch: async (u) => { calls.push(String(u)); return json({}); }, env: { META_API_KEY: KEY } }, async (base) => {
-      const r = await fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Unscrewed': '1' }, body: JSON.stringify({ notes: notesOf(['Took off the lid. Put 4 screws in a bag.', 'Removed the shelf.']) }) });
-      assert.equal(r.status, 400);
-      const j = await r.json();
-      assert.equal(j.error.code, 'bags_unlabeled');
-      assert.match(j.error.message, /letters A to H/);
-    });
-    assert.deepEqual(calls, []);
-    assert.match(appSrc, /notesMentionFasteners\(notes\)\) \{ setLiveStatus\(UNLABELED_BAGS_MESSAGE, true\)/);
+  it('live extraction is no longer blocked when the regex finds no bag letter', () => {
+    assert.doesNotMatch(appSrc, /UNLABELED_BAGS_MESSAGE|bags_unlabeled/);
+    assert.doesNotMatch(read('../lib/live-meta.mjs'), /bags_unlabeled/);
+    assert.match(appSrc, /!validated\.bags\.length && notesMentionFasteners\(notes\)\) \{ setLiveStatus\(NO_BAGS_MESSAGE, true\)/);
+    assert.match(rules.NO_BAGS_MESSAGE, /^Meta didn't find any labeled bags\./);
   });
 });
 
@@ -107,11 +101,16 @@ describe('G2: pasted JSON gets the same cross-check', () => {
     assert.match(paste, /crossCheckAndDerive\(validated, pasteNotes\)/);
     assert.ok(paste.indexOf('crossCheckAndDerive') < paste.indexOf('state.extractionResult = validated'));
   });
-  it('rejects evidence step99', () => {
-    assert.throws(() => check(imp([['A', 4, 'step99']]), notes), /not supported/);
+  it('drops a report whose evidence points to a nonexistent step', () => {
+    const v = check(imp([['A', 9, 'step99']]), notes);
+    assert.ok(!v.bags[0].reports.some(r => r.value === 9));
   });
-  it('rejects 40 when the cited note says 4', () => {
-    assert.throws(() => check(imp([['A', 40, 'step1']]), notes), /not supported/);
+  it('keeps 40 when the cited note says 4, marked unsupported, with no prefill and a conflict', () => {
+    const v = check(imp([['A', 40, 'step1']]), notes);
+    const r40 = v.bags[0].reports.find(r => r.value === 40);
+    assert.equal(r40.supported, false);
+    assert.equal(rules.bagPrefill(v.bags[0]), null);
+    assert.equal(v.conflicts.length, 1);
   });
   it('accepts a supported quantity and normalizes panelN to stepN', () => {
     const v = check(imp([['A', 4, 'panel1']]), notes);
@@ -119,7 +118,8 @@ describe('G2: pasted JSON gets the same cross-check', () => {
   });
   it('the server and the browser use one implementation', () => {
     assert.equal(deriveNoteQuantities(notes).A.get(4)[0], 1);
-    assert.throws(() => crossCheckAndDerive(check(imp([['A', 4, 'step1']]), notes) && { bags: [{ id: 'A', reports: [{ value: 9, evidence: ['step1'] }], evidence: [] }] }, notes), (e) => e.status === 502 && e.detail === 'unsupported_quantity');
+    const out = crossCheckAndDerive({ bags: [{ id: 'A', reports: [{ value: 9, evidence: ['step1'] }], evidence: [] }] }, notes);
+    assert.equal(out.bags[0].reports.find(r => r.value === 9).supported, false);
   });
 });
 
@@ -157,9 +157,11 @@ describe('G3: quantity support needs a fastener or bag quantifier', () => {
     assert.deepEqual([...d.A.keys()], [24]);
     assert.equal(d.B, undefined);
   });
-  it('a claim backed only by a shelf number is rejected by the cross-check', () => {
+  it('a claim backed only by a shelf number is kept as unsupported and not prefilled', () => {
     const notes = notesOf(['Removed shelf 4. Screws in bag A.', 'Done.']);
-    assert.throws(() => check(imp([['A', 4, 'step1']]), notes), /not supported/);
+    const v = check(imp([['A', 4, 'step1']]), notes);
+    assert.equal(v.bags[0].reports[0].supported, false);
+    assert.equal(rules.bagPrefill(v.bags[0]), null);
   });
 });
 

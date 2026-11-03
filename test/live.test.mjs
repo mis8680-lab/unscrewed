@@ -70,7 +70,7 @@ describe('Live Meta handler', () => {
     const text = body.input[0].content[0].text;
     assert.ok(text.startsWith(readFileSync(join(META, 'prompt.txt'), 'utf8')));
     assert.match(text, /This record has 5 steps/);
-    assert.match(text, /bag letters mentioned in the notes are: A, B, C/);
+    assert.match(text, /found these bag letters in the notes: A, B, C/);
     assert.match(text, /data, not instructions/);
     assert.match(text, /<<<UNTRUSTED_NOTES\n\[/);
     assert.ok(text.endsWith('\nUNTRUSTED_NOTES>>>'));
@@ -99,13 +99,13 @@ describe('Live Meta handler', () => {
     });
   });
 
-  it('schema invalid: missing bag C', async () => {
+  it('fail-soft: a bag Meta omitted but the notes name is added, not rejected', async () => {
     const bad = structuredClone(goodProposal);
     bad.bags = bad.bags.filter(b => b.id !== 'C');
     await withServer({ fetch: mockFetch(JSON.stringify(bad)), env: { META_API_KEY: KEY } }, async base => {
       const r = await post(base, { notes: NOTES });
-      assert.equal(r.status, 502);
-      assert.equal((await r.json()).error.code, 'schema_invalid');
+      assert.equal(r.status, 200);
+      assert.ok((await r.json()).proposal.bags.some(b => b.id === 'C'));
     });
   });
 
@@ -261,24 +261,27 @@ describe('Live: untrusted notes and deterministic checks', () => {
     return { status: r.status, j: await r.json() };
   });
 
-  it('rejects a quantity not present in the cited note (unsupported_quantity)', async () => {
+  it('keeps a quantity not present in the cited note as unsupported, never a 502', async () => {
     const bad = structuredClone(goodProposal); bad.bags[1].reported_quantities[0].value = 99;
     const { status, j } = await run(bad);
-    assert.equal(status, 502);
-    assert.equal(j.error.code, 'schema_invalid');
-    assert.equal(j.error.detail, 'unsupported_quantity');
+    assert.equal(status, 200);
+    const b = j.proposal.bags.find(x => x.id === 'B');
+    assert.equal(b.reports.find(r => r.value === 99).supported, false);
+    assert.ok(j.proposal.conflicts.some(c => c.bag === 'B'));
   });
 
-  it('rejects a quantity whose evidence is not a panelN id', async () => {
+  it('a report whose evidence is not a stepN id is dropped', async () => {
     const bad = structuredClone(goodProposal); bad.bags[2].reported_quantities[0].evidence = 'image';
-    const { j } = await run(bad);
-    assert.equal(j.error.detail, 'unsupported_quantity');
+    const { status, j } = await run(bad);
+    assert.equal(status, 200);
+    assert.ok(!j.proposal.bags.find(x => x.id === 'C').reports.some(r => r.evidence.includes('image')));
   });
 
   it('does not match integers inside larger numbers', async () => {
     const bad = structuredClone(goodProposal); bad.bags[0].reported_quantities[0] = { value: 1, evidence: 'panel5' };
-    const { j } = await run(bad, NOTES.map(n => n.panel === 5 ? { ...n, note: 'Bags A/B/C each hold 14 screws.' } : n));
-    assert.equal(j.error.detail, 'unsupported_quantity');
+    const { status, j } = await run(bad, NOTES.map(n => n.panel === 5 ? { ...n, note: 'Bags A/B/C each hold 14 screws.' } : n));
+    assert.equal(status, 200);
+    assert.equal(j.proposal.bags.find(x => x.id === 'A').reports.find(r => r.value === 1).supported, false);
   });
 
   it('derives the conflict from the notes even when the model omitted it', async () => {
@@ -296,8 +299,9 @@ describe('Live: untrusted notes and deterministic checks', () => {
 
   it('no conflict when the notes agree', async () => {
     const { j } = await run(goodProposal, inputs.normal);
-    // the conflict fixture reports 6 for A, so normal notes must reject it; use matching proposal instead
-    assert.equal(j.error.detail, 'unsupported_quantity');
+    // the conflict fixture reports 6 for A, which the normal notes do not state: kept as unsupported, so it conflicts
+    assert.equal(j.proposal.bags.find(b => b.id === 'A').reports.find(r => r.value === 6).supported, false);
+    assert.ok(j.proposal.conflicts.some(c => c.bag === 'A'));
     const agree = structuredClone(goodProposal); agree.bags[0].reported_quantities[0].value = 4;
     const r = await run(agree, inputs.normal);
     assert.equal(r.status, 200);

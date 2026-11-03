@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const read = (f) => readFileSync(new URL('../public/' + f, import.meta.url), 'utf8');
 const src = read('sample-data.js');
 const rules = new Function('structuredClone', `${src}
-return { bagLettersFromNotes, observationHasFastenerCount, crossCheckAndDerive, deriveNoteQuantities, noteSupportsQuantity, quantitiesInNote, UNLABELED_BAGS_MESSAGE };`)(structuredClone);
+return { bagLettersFromNotes, observationHasFastenerCount, crossCheckAndDerive, deriveNoteQuantities, noteSupportsQuantity, quantitiesInNote, NO_BAGS_MESSAGE };`)(structuredClone);
 const notesOf = (arr) => arr.map((note, i) => ({ panel: i + 1, note }));
 const bags = (t) => rules.bagLettersFromNotes(notesOf([t]));
 const sup = (t, n, b) => rules.noteSupportsQuantity(t, n, b);
@@ -22,7 +22,8 @@ describe('Review probes: bag letters', () => {
     assert.deepEqual(bags('Put them in a bag'), []);
     assert.deepEqual(bags('bag a lot of screws'), []);
     assert.deepEqual(bags('bag a few screws'), []);
-    assert.deepEqual(bags('I will bag a screw'), ['A']);
+    assert.deepEqual(bags('I will bag a screw'), []);
+    assert.deepEqual(bags('No. 8 screws in bag A'), ['A']);
   });
   it('lists and ranges', () => {
     assert.deepEqual(bags('bags A/B/C'), ['A', 'B', 'C']);
@@ -31,7 +32,7 @@ describe('Review probes: bag letters', () => {
     assert.deepEqual(bags('bags a to c'), ['A', 'B', 'C']);
     assert.deepEqual(bags('Bag A, bag B and bag C'), ['A', 'B', 'C']);
   });
-  it('unlabeled message mentions letters A to H', () => assert.match(rules.UNLABELED_BAGS_MESSAGE, /letters A to H/));
+  it('no-bags message mentions letters A to H', () => assert.match(rules.NO_BAGS_MESSAGE, /A to H/));
 });
 
 describe('Review probes: bag-bound quantities', () => {

@@ -351,3 +351,6 @@ h2 + .block, h2 + div > .block:first-child { border-top: none; }
 .seen-box li { font-style: italic; font-size: 0.9375rem; margin: 2px 0; }
 .obs-step { margin: 10px 0; }
 .obs-step-label { font-weight: 700; }
+
+.report-row.unsupported { color: var(--ink, inherit); font-style: italic; }
+.bag-detail.check-note { font-weight: 600; }
