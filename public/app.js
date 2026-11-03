@@ -4,7 +4,7 @@
  * Flow: Input -> Review -> Confirm (qty + step mapping) -> Reassembly (+ History)
  *
  * localStorage persistence rules:
- *  - Persisted: scenario, editedNotes (if modified), customImage flag,
+ *  - Persisted: scenario, mode, customSteps (notes and downscaled photos), editedNotes (if modified),
  *    extractionResult (proposal only), actionLog
  *  - NEVER persisted as confirmed: record, confirmations, stepMappings
  *  - On reload: proposals restored, confirmations require fresh UI events
@@ -18,8 +18,9 @@
 
   // -- Constants -------------------------------------------------------
   const STORAGE_KEY = 'unscrewed_mvp_state';
-  const REQUIRED_BAGS = ['A', 'B', 'C'];
-  const VALID_STEPS = [1, 2, 3, 4, 5];
+  const MIN_STEPS_UI = 2;
+  const MAX_STEPS_UI = 12;
+  const IMG_DATA_RE = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+\/=]+)$/;
 
   // -- State -----------------------------------------------------------
   let state = loadState();
@@ -28,7 +29,8 @@
     return {
       currentStep: 'input',
       scenario: 'normal',
-      customImage: null,
+      mode: 'sample',
+      customSteps: null,
       editedNotes: null,
       extractionResult: null,
       extractionInputHash: null,
@@ -52,14 +54,25 @@
         if (!['input', 'review'].includes(parsed.currentStep)) {
           parsed.currentStep = parsed.extractionResult ? 'review' : 'input';
         }
-        if (parsed.editedNotes !== null) {
+        if (parsed.mode !== 'custom') parsed.mode = 'sample';
+        delete parsed.customImage;
+        if (parsed.mode === 'custom') {
+          const cs = parsed.customSteps;
+          const ok = Array.isArray(cs) && cs.length >= 2 && cs.length <= 12 &&
+            cs.every(x => x && typeof x.note === 'string' && x.note.length <= 500 && (x.image === null || (typeof x.image === 'string' && IMG_DATA_RE.test(x.image))));
+          if (!ok) { parsed.mode = 'sample'; parsed.customSteps = null; }
+        } else {
+          parsed.customSteps = null;
+        }
+        if (parsed.editedNotes !== null && parsed.editedNotes !== undefined) {
           if (!Array.isArray(parsed.editedNotes) ||
               !parsed.editedNotes.every(n => typeof n === 'object' && typeof n.panel === 'number' && typeof n.note === 'string')) {
             parsed.editedNotes = null;
           }
         }
         if (parsed.extractionResult) {
-          if (!parsed.extractionResult.valid || !Array.isArray(parsed.extractionResult.bags)) {
+          if (!parsed.extractionResult.valid || !Array.isArray(parsed.extractionResult.bags) ||
+              (parsed.mode === 'custom' && !parsed.extractionResult.bags.every(b => b && typeof b.id === 'string' && /^[A-H]$/.test(b.id)))) {
             parsed.extractionResult = null;
           }
         }
@@ -78,14 +91,22 @@
     const persist = {
       currentStep: state.currentStep,
       scenario: state.scenario,
-      customImage: state.customImage,
+      mode: state.mode,
+      customSteps: state.customSteps,
       editedNotes: state.editedNotes,
       extractionResult: state.extractionResult,
       extractionInputHash: state.extractionInputHash,
       extractionMeta: state.extractionMeta,
       actionLog: state.actionLog,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
+    } catch {
+      // Photos can exceed the browser storage quota. Keep notes and results, drop the photos.
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...persist, customSteps: persist.customSteps ? persist.customSteps.map(x => ({ note: x.note, image: null })) : null, extractionResult: null, extractionMeta: null, extractionInputHash: null }));
+      } catch { /* storage unavailable */ }
+    }
   }
 
   let currentRecord = null;
@@ -119,7 +140,7 @@
 
   // Evidence ids like "panel2" are the step numbers of the photo sheet. People see "step 2".
   function evLabel(e) {
-    const m = /^panel(\d+)$/i.exec(String(e).trim());
+    const m = /^(?:panel|step)(\d+)$/i.exec(String(e).trim());
     return m ? 'step ' + m[1] : String(e);
   }
   function evList(arr) { return (arr || []).map(evLabel).join(', '); }
@@ -184,24 +205,50 @@
   }
 
   // -- Step 1: Input ---------------------------------------------------
+  const isCustom = () => state.mode === 'custom' && Array.isArray(state.customSteps);
+  const stepThumbAlt = (n) => 'Your photo for step ' + n;
+
+  function currentNotesModel() {
+    if (isCustom()) return state.customSteps.map((st, i) => ({ panel: i + 1, note: st.note }));
+    return state.editedNotes || SAMPLE_INPUTS[state.scenario || 'normal']?.notes || [];
+  }
+
   function renderInput() {
     const scenario = state.scenario || 'normal';
-    const baseNotes = SAMPLE_INPUTS[scenario]?.notes || [];
-    const notes = state.editedNotes || baseNotes;
+    const custom = isCustom();
+    const notes = currentNotesModel();
     const container = $('#notes-container');
     container.innerHTML = '';
 
-    notes.forEach((n) => {
+    $('#photo-block').hidden = custom;
+    $('#own-record-bar').hidden = custom;
+    $('#step-edit-bar').hidden = !custom;
+    $('#btn-add-step').disabled = !custom || notes.length >= MAX_STEPS_UI;
+    $('#notes-hint').textContent = custom
+      ? 'Two to twelve steps. Give each step one photo and one line. Say which bag the screws went in and how many.'
+      : 'One line per photo. Say which bag the screws went in and how many.';
+    $('#btn-extract').textContent = custom ? 'Skip to pasting a Meta response' : EXTRACT_LABEL;
+
+    notes.forEach((n, idx) => {
       const div = document.createElement('div');
-      div.className = 'panel-note';
+      div.className = 'panel-note' + (custom ? ' with-photo' : '');
+      const img = custom ? state.customSteps[idx].image : null;
       div.innerHTML = `
         <label for="note-${esc(n.panel)}">Step ${esc(n.panel)}</label>
-        <textarea id="note-${esc(n.panel)}" data-panel="${esc(n.panel)}" rows="2" aria-describedby="voice-hint-${esc(n.panel)}">${esc(n.note)}</textarea>
-        <div class="voice-row">
-          <button type="button" class="btn btn-outline btn-sm mic-btn" data-mic="${esc(n.panel)}" aria-pressed="false"${voiceAvailable ? '' : ' disabled'}>Record note</button>
-          <span class="voice-status" id="voice-status-${esc(n.panel)}" role="status" aria-live="polite">${voiceAvailable ? '' : esc(VOICE_OFF_TEXT)}</span>
+        <div class="step-body">
+          ${custom ? `<div class="step-photo">
+            ${img ? '<img class="step-thumb" src="' + esc(img) + '" alt="' + esc(stepThumbAlt(n.panel)) + '">' : '<span class="step-nophoto">No photo yet</span>'}
+            <button type="button" class="btn btn-outline btn-sm" data-photo="${esc(n.panel)}">${img ? 'Change photo' : 'Add photo'}</button>
+            <input type="file" accept="image/*" hidden data-photo-input="${esc(n.panel)}" aria-label="Choose a photo for step ${esc(n.panel)}">
+          </div>` : ''}
+          <textarea id="note-${esc(n.panel)}" data-panel="${esc(n.panel)}" rows="2" aria-describedby="voice-hint-${esc(n.panel)}">${esc(n.note)}</textarea>
+          <div class="voice-row">
+            <button type="button" class="btn btn-outline btn-sm mic-btn" data-mic="${esc(n.panel)}" aria-pressed="false"${voiceAvailable ? '' : ' disabled'}>Record note</button>
+            ${custom ? '<button type="button" class="btn btn-quiet btn-sm" data-remove-step="' + esc(n.panel) + '"' + (notes.length <= MIN_STEPS_UI ? ' disabled' : '') + '>Remove step ' + esc(n.panel) + '</button>' : ''}
+            <span class="voice-status" id="voice-status-${esc(n.panel)}" role="status" aria-live="polite">${voiceAvailable ? '' : esc(VOICE_OFF_TEXT)}</span>
+          </div>
+          <p class="hint voice-hint" id="voice-hint-${esc(n.panel)}"${voiceUnedited.has(n.panel) ? '' : ' hidden'}>Transcribed by Meta. Check it.</p>
         </div>
-        <p class="hint voice-hint" id="voice-hint-${esc(n.panel)}"${voiceUnedited.has(n.panel) ? '' : ' hidden'}>Transcribed by Meta. Check it.</p>
       `;
       container.appendChild(div);
     });
@@ -214,9 +261,9 @@
           const h = document.getElementById('voice-hint-' + p);
           if (h) h.hidden = true;
         }
-        state.editedNotes = getCurrentNotes();
+        syncNotesToState();
         if (state.extractionResult) {
-          const currentHash = hashNotes(state.editedNotes);
+          const currentHash = hashNotes(getCurrentNotes());
           if (currentHash !== state.extractionInputHash) {
             invalidateExtraction('You edited the notes, so the earlier result was cleared. Build the bag record again.');
           }
@@ -226,20 +273,146 @@
     });
 
     $$('.scenario-bar button').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.scenario === scenario);
-      btn.setAttribute('aria-pressed', btn.dataset.scenario === scenario ? 'true' : 'false');
+      const on = !custom && btn.dataset.scenario === scenario;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+  }
 
-    if (state.customImage) {
-      $('#preview-img').src = state.customImage;
-      $('#preview-img').alt = 'The photo you chose';
-      $('#custom-image-badge').style.display = 'block';
+  // Copy what is in the note boxes into state (sample edits or custom steps).
+  function syncNotesToState() {
+    const notes = getCurrentNotes();
+    if (isCustom()) {
+      state.customSteps = notes.map((n, i) => ({ note: n.note, image: (state.customSteps[i] || {}).image || null }));
     } else {
-      $('#preview-img').src = 'fixtures/synthetic-shelf.png';
-      $('#preview-img').alt = 'Five numbered photos of a small wooden bookshelf being taken apart, with zip bags labeled A, B and C appearing in later photos';
-      $('#custom-image-badge').style.display = 'none';
+      state.editedNotes = notes;
     }
   }
+
+  function imageSignature() {
+    return isCustom() ? state.customSteps.map(x => (x.image ? x.image.length + ':' + x.image.slice(-24) : 0)) : [];
+  }
+
+  function invalidateExtraction(reason) {
+    state.extractionResult = null;
+    state.extractionMeta = null;
+    state.extractionInputHash = null;
+    currentRecord = null;
+    confirmations = {};
+    stepMappings = {};
+    saveState();
+    if (reason) toast(reason);
+  }
+
+  $('#scenario-bar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (isCustom() && !confirm('Go back to the sample and discard your own steps and photos?')) return;
+    state.mode = 'sample';
+    state.customSteps = null;
+    state.scenario = btn.dataset.scenario;
+    state.editedNotes = null;
+    voiceUnedited.clear();
+    invalidateExtraction(null);
+    saveState();
+    renderInput();
+    logAction('scenario_changed', state.scenario);
+    toast('Sample loaded: ' + btn.textContent);
+  });
+
+  function requireIdleMic() {
+    if (activeMic) { toast('Stop the recording first.'); return false; }
+    return true;
+  }
+
+  $('#btn-own-record').addEventListener('click', () => {
+    if (!requireIdleMic()) return;
+    state.mode = 'custom';
+    state.customSteps = [{ note: '', image: null }, { note: '', image: null }];
+    state.editedNotes = null;
+    voiceUnedited.clear();
+    invalidateExtraction(null);
+    saveState();
+    renderInput();
+    logAction('own_record_started', '2 steps');
+    toast('Your own record: add a photo and a line for each step.');
+  });
+
+  $('#btn-add-step').addEventListener('click', () => {
+    if (!isCustom() || !requireIdleMic()) return;
+    if (state.customSteps.length >= MAX_STEPS_UI) { toast('A record holds up to ' + MAX_STEPS_UI + ' steps.'); return; }
+    syncNotesToState();
+    state.customSteps.push({ note: '', image: null });
+    voiceUnedited.clear();
+    invalidateExtraction(null);
+    saveState();
+    renderInput();
+    logAction('step_added', 'now ' + state.customSteps.length);
+  });
+
+  function removeStep(n) {
+    if (!isCustom() || !requireIdleMic()) return;
+    if (state.customSteps.length <= MIN_STEPS_UI) { toast('A record needs at least ' + MIN_STEPS_UI + ' steps.'); return; }
+    syncNotesToState();
+    state.customSteps.splice(n - 1, 1);
+    voiceUnedited.clear();
+    invalidateExtraction('Step removed, so the earlier result was cleared. Build the bag record again.');
+    saveState();
+    renderInput();
+    logAction('step_removed', 'step ' + n);
+  }
+
+  // Downscale big photos so up to 12 fit in one request and in browser storage.
+  function readStepImage(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read that file.'));
+      reader.onload = () => {
+        const raw = String(reader.result);
+        const img = new Image();
+        img.onerror = () => reject(new Error('That file is not an image this browser can open. Use a PNG, JPEG or WebP photo.'));
+        img.onload = () => {
+          const max = 1600;
+          const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+          if (scale === 1 && IMG_DATA_RE.test(raw) && raw.length < 900000) { resolve(raw); return; }
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.src = raw;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const notesContainer = $('#notes-container');
+  notesContainer.addEventListener('click', (e) => {
+    const pb = e.target.closest('[data-photo]');
+    if (pb) { const inp = notesContainer.querySelector('[data-photo-input="' + pb.dataset.photo + '"]'); if (inp) inp.click(); return; }
+    const rb = e.target.closest('[data-remove-step]');
+    if (rb && !rb.disabled) removeStep(parseInt(rb.dataset.removeStep, 10));
+  });
+  notesContainer.addEventListener('change', async (e) => {
+    const inp = e.target.closest('[data-photo-input]');
+    if (!inp || !isCustom()) return;
+    const n = parseInt(inp.dataset.photoInput, 10);
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    try {
+      const dataUrl = await readStepImage(file);
+      syncNotesToState();
+      state.customSteps[n - 1].image = dataUrl;
+      invalidateExtraction('You changed a photo, so the earlier result was cleared.');
+      saveState();
+      renderInput();
+      logAction('image_uploaded', 'step ' + n);
+      toast('Photo added to step ' + n + '. It stays in this browser unless you make a live Meta call.');
+    } catch (err) {
+      toast(err && err.message ? err.message : 'Could not use that photo.');
+    }
+  });
 
   // -- Voice notes (Meta Muse Voice Transcribe) ---------------------------
   const VOICE_OFF_TEXT = 'Voice notes need a Meta API key on the server.';
@@ -309,67 +482,12 @@
     setVoiceStatus(panel, 'Recording, up to 60 seconds.');
   });
 
-  function invalidateExtraction(reason) {
-    state.extractionResult = null;
-    state.extractionMeta = null;
-    state.extractionInputHash = null;
-    currentRecord = null;
-    confirmations = {};
-    stepMappings = {};
-    saveState();
-    if (reason) toast(reason);
-  }
-
-  $('#scenario-bar').addEventListener('click', (e) => {
-    const btn = e.target.closest('button');
-    if (!btn) return;
-    state.scenario = btn.dataset.scenario;
-    state.editedNotes = null;
-    invalidateExtraction(null);
-    saveState();
-    renderInput();
-    logAction('scenario_changed', state.scenario);
-    toast('Sample loaded: ' + btn.textContent);
-  });
-
-  $('#btn-change-image').addEventListener('click', () => $('#image-input').click());
-  $('#image-area').addEventListener('click', () => $('#image-input').click());
-  $('#image-input').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      state.customImage = reader.result;
-      invalidateExtraction('You chose a new photo, so the earlier result was cleared.');
-      $('#preview-img').src = reader.result;
-      $('#preview-img').alt = 'The photo you chose';
-      $('#custom-image-badge').style.display = 'block';
-      saveState();
-      logAction('image_uploaded', file.name);
-      toast('Photo loaded. It stays in this browser unless you make a live Meta call.');
-    };
-    reader.readAsDataURL(file);
-  });
-
-  const imgArea = $('#image-area');
-  imgArea.addEventListener('dragover', (e) => { e.preventDefault(); imgArea.classList.add('dragover'); });
-  imgArea.addEventListener('dragleave', () => imgArea.classList.remove('dragover'));
-  imgArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    imgArea.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      $('#image-input').files = e.dataTransfer.files;
-      $('#image-input').dispatchEvent(new Event('change'));
-    }
-  });
-
   $('#btn-extract').addEventListener('click', () => {
     const notes = getCurrentNotes();
-    const match = matchSeededInput(notes, !!state.customImage);
+    const match = matchSeededInput(notes, isCustom());
 
     if (match.matched) {
-      const validated = validateMetaImport(match.metaOutput);
+      const validated = validateMetaImport(match.metaOutput, { stepCount: notes.length });
       if (!validated.valid) {
         toast('The saved response did not pass Unscrewed\'s checks (' + validated.error + '). Reload the page and try again.');
         return;
@@ -387,7 +505,7 @@
       state.extractionResult = null;
       state.extractionMeta = null;
       saveState();
-      if (state.customImage) {
+      if (isCustom()) {
         toast('Saved responses only match the test photo. Paste a Meta response on the next screen, or use a live call.');
       } else {
         toast('These notes do not match a saved response. Paste a Meta response on the next screen, or pick a sample again.');
@@ -444,16 +562,19 @@
     if (!liveAvailable || liveBtn.disabled) return;
     const notes = getCurrentNotes();
     const body = { notes };
-    if (state.customImage) {
-      const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(state.customImage);
-      if (!m) { setLiveStatus('Live calls accept PNG, JPEG or WebP photos only. Choose a different photo, or paste a Meta response instead.', true); return; }
-      body.imageMime = m[1];
-      body.imageBase64 = m[2];
+    if (isCustom()) {
+      const images = [];
+      for (let i = 0; i < state.customSteps.length; i++) {
+        const m = state.customSteps[i].image && IMG_DATA_RE.exec(state.customSteps[i].image);
+        if (!m) { setLiveStatus('Step ' + (i + 1) + ' needs a PNG, JPEG or WebP photo before Meta can read your steps. Add one, or paste a Meta response instead.', true); return; }
+        images.push({ step: i + 1, mime: m[1], base64: m[2] });
+      }
+      body.images = images;
     }
     liveBtn.disabled = true;
     $('#btn-extract').disabled = true;
     liveBtn.textContent = 'Asking Meta (up to 60 seconds)';
-    setLiveStatus('Sending your photo and notes to Meta. This can take up to a minute.', false);
+    setLiveStatus(isCustom() ? 'Sending your ' + notes.length + ' step photos and notes to Meta. This can take up to a minute.' : 'Sending your photo and notes to Meta. This can take up to a minute.', false);
     try {
       const r = await fetch('api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Unscrewed': '1' }, body: JSON.stringify(body) });
       let j;
@@ -464,7 +585,7 @@
         logAction('live_failed', e.code || r.status);
         return;
       }
-      const validated = validateMetaImport(toImportShape(j.proposal));
+      const validated = validateMetaImport(toImportShape(j.proposal), importOpts(notes));
       if (!validated.valid) {
         setLiveStatus('Unscrewed rejected Meta\'s answer: ' + validated.error + '. Try the live call again.', true);
         logAction('live_rejected', validated.error);
@@ -511,8 +632,8 @@
       importDetails.open = true;
       renderError(invalidC,
         'Nothing to review yet',
-        state.customImage
-          ? 'Saved responses only match the test photo. Paste a Meta response below, or go back and use the test photo.'
+        isCustom()
+          ? 'Saved responses only match the test photo. Paste a Meta response below, or go back and use a live call.'
           : 'The notes changed, so no saved response matches them. Go back and build the bag record again, or paste a Meta response below.'
       );
       $('#questions-card').style.display = 'none';
@@ -622,7 +743,7 @@
     if (!raw) { toast('Paste the JSON from Meta first.'); return; }
     let parsed;
     try { parsed = JSON.parse(raw); } catch { toast('That text is not valid JSON. Copy the whole response from Meta and paste it again.'); return; }
-    const validated = validateMetaImport(parsed);
+    const validated = validateMetaImport(parsed, importOpts(getCurrentNotes()));
     if (!validated.valid) { toast('Unscrewed could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
     state.extractionResult = validated;
     state.extractionMeta = null;
@@ -655,7 +776,7 @@
       rec.addStep({
         action: n.note,
         source: 'user_reported',
-        evidence: ['panel' + n.panel]
+        evidence: ['step' + n.panel]
       });
     });
 
@@ -714,6 +835,9 @@
       renderError(container, 'Nothing to confirm yet', 'Go back to Add steps and build the bag record first.');
       return;
     }
+    if (ext.bags.length === 0) {
+      container.innerHTML = '<p class="hint">Your notes do not mention any bag, so there is nothing to count.</p>';
+    }
 
     const unresolvedConflicts = currentRecord.getUnresolvedConflicts();
 
@@ -728,7 +852,7 @@
       const stepDefault = mappedStep != null ? mappedStep : bag.step;
       const stepSelect = '<select id="step-map-' + esc(bag.id) + '" data-map-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
         '<option value="">Choose a step</option>' +
-        VALID_STEPS.map(st => '<option value="' + st + '"' + (stepDefault === st ? ' selected' : '') + '>Step ' + st + '</option>').join('') +
+        validSteps().map(st => '<option value="' + st + '"' + (stepDefault === st ? ' selected' : '') + '>Step ' + st + '</option>').join('') +
         '</select>';
 
       container.innerHTML +=
@@ -807,7 +931,7 @@
     }
     const stepSel = $('#step-map-' + bagId);
     const stepVal = stepSel ? parseInt(stepSel.value, 10) : NaN;
-    if (!VALID_STEPS.includes(stepVal)) {
+    if (!validSteps().includes(stepVal)) {
       if (msg) msg.textContent = 'Choose the step you put bag ' + bagId + ' in, then confirm again.';
       if (stepSel) stepSel.focus();
       return;
@@ -877,12 +1001,12 @@
     const btn = $('#btn-to-reassembly');
     if (!currentRecord) { btn.disabled = true; return; }
 
-    const allQtyConfirmed = REQUIRED_BAGS.every(id => {
+    const allQtyConfirmed = bagIds().every(id => {
       const part = currentRecord.getPart('screws_' + id);
       return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
     });
     const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
-    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null && VALID_STEPS.includes(stepMappings[id]));
+    const allMapped = bagIds().every(id => stepMappings[id] != null && validSteps().includes(stepMappings[id]));
 
     btn.disabled = !(allQtyConfirmed && noConflicts && allMapped);
 
@@ -894,19 +1018,19 @@
       if (!allMapped) gates.push('You choose a step for every bag.');
       gateStatus.innerHTML = gates.length > 0
         ? '<div class="gate-blocked"><strong>The put-back reference stays locked until:</strong><ul>' + gates.map(g => '<li>' + esc(g) + '</li>').join('') + '</ul></div>'
-        : '<div class="gate-clear"><strong>All three bags are confirmed.</strong>You can continue to the put-back reference.</div>';
+        : '<div class="gate-clear"><strong>' + (bagIds().length === 0 ? 'Your notes mention no bags, so there is nothing to count.' : bagIds().length === 1 ? 'The bag is confirmed.' : 'All ' + bagIds().length + ' bags are confirmed.') + '</strong>You can continue to the put-back reference.</div>';
     }
   }
 
   $('#btn-back-review').addEventListener('click', () => goToStep('review'));
   $('#btn-to-reassembly').addEventListener('click', () => {
     if (!currentRecord) return;
-    const allQtyConfirmed = REQUIRED_BAGS.every(id => {
+    const allQtyConfirmed = bagIds().every(id => {
       const part = currentRecord.getPart('screws_' + id);
       return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
     });
     const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
-    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null);
+    const allMapped = bagIds().every(id => stepMappings[id] != null);
     if (!allQtyConfirmed || !noConflicts || !allMapped) {
       toast('Confirm every bag, settle any disagreeing counts, and choose a step for each bag first.');
       return;
@@ -926,7 +1050,7 @@
     const summary = currentRecord.toReassemblySummary();
     const allConfirmed = summary.parts.every(p => p.quantityIsConfirmed);
     const hasConflicts = summary.parts.some(p => p.hasUnresolvedConflict);
-    const allMapped = REQUIRED_BAGS.every(id => stepMappings[id] != null);
+    const allMapped = bagIds().every(id => stepMappings[id] != null);
 
     if (!allConfirmed || hasConflicts || !allMapped) {
       const reasons = [];
@@ -991,7 +1115,10 @@
   // -- Step 5: History -------------------------------------------------
   const ACTION_TEXT = {
     scenario_changed: (d) => ['Chose a sample', SCENARIO_LABELS[d] || d],
-    image_uploaded: (d) => ['Chose your own photo', d],
+    image_uploaded: (d) => ['Added a photo', d],
+    own_record_started: (d) => ['Started your own record', d],
+    step_added: (d) => ['Added a step', d],
+    step_removed: (d) => ['Removed a step', d],
     extraction_seeded: (d) => ['Built the bag record from a saved Meta response', SCENARIO_LABELS[d] || d],
     extraction_live: (d) => ['Built the bag record from a live Meta call', d],
     live_failed: (d) => ['The live Meta call failed', d ? 'Reason: ' + d : ''],
@@ -1087,10 +1214,19 @@
   });
 
   // -- Helpers ---------------------------------------------------------
+  function bagIds() { return state.extractionResult ? state.extractionResult.bags.map(b => b.id) : []; }
+  function stepCountNow() {
+    const e = state.extractionResult;
+    return (e && Number.isSafeInteger(e.stepCount) && e.stepCount > 0) ? e.stepCount : currentNotesModel().length;
+  }
+  function validSteps() { return Array.from({ length: stepCountNow() }, (_, i) => i + 1); }
+  // The bags in any answer must match the bag letters the notes mention.
+  function importOpts(notes) { return { expectedBags: bagLettersFromNotes(notes), stepCount: notes.length }; }
+
   function getCurrentNotes() {
     const textareas = $$('#notes-container textarea');
     if (textareas.length === 0) {
-      return state.editedNotes || SAMPLE_INPUTS[state.scenario]?.notes || [];
+      return currentNotesModel();
     }
     return Array.from(textareas).map(ta => ({
       panel: parseInt(ta.dataset.panel, 10),
@@ -1099,7 +1235,7 @@
   }
 
   function hashNotes(notes) {
-    return JSON.stringify(notes);
+    return JSON.stringify([notes, imageSignature()]);
   }
 
   function formatTime(iso) {

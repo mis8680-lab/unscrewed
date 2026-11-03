@@ -53,8 +53,28 @@ const SEEDED_INPUT_HASH = Object.freeze({
   conflict: JSON.stringify(SAMPLE_INPUTS.conflict.notes),
 });
 
-/** Required bag IDs for this fixed sample prototype. */
-const REQUIRED_BAG_IDS = Object.freeze(['A', 'B', 'C']);
+/** Bag letters Unscrewed supports. How many bags a record has depends on the notes. */
+const ALL_BAG_IDS = Object.freeze(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
+const MIN_STEPS = 2;
+const MAX_STEPS = 12;
+
+/** Bag letters (A to H) a set of notes mentions, e.g. "bag A", "bags A/B and C". Sorted, unique. */
+function bagLettersFromNotes(notes) {
+  const found = new Set();
+  for (const n of (Array.isArray(notes) ? notes : [])) {
+    const text = String(n && n.note != null ? n.note : '');
+    for (const m of text.matchAll(/[Bb]ags?\s+([A-H](?:\s*(?:[\/,&]|and)\s*[A-H])*)(?![A-Za-z])/g)) {
+      for (const l of m[1].match(/[A-H]/g)) found.add(l);
+    }
+  }
+  return [...found].sort();
+}
+
+/** "step3" or legacy "panel3" -> 3, else null. */
+function evidenceStepNumber(e) {
+  const m = /^(?:step|panel)(\d+)$/i.exec(String(e).trim());
+  return m ? Number(m[1]) : null;
+}
 
 /**
  * Match user input against seeded scenarios.
@@ -75,35 +95,43 @@ function matchSeededInput(notes, hasCustomImage) {
 /**
  * Validate a Meta JSON import. Structural check only.
  *
- * Fixed rules for this sample prototype:
- *  - Exactly 3 bags with IDs A, B, C (no duplicates, no missing, no extras)
+ * Rules:
+ *  - Bag IDs are A to H, no duplicates. When opts.expectedBags is given (the bag letters the notes
+ *    mention), the bags must equal that set exactly: missing or extra bags are rejected.
+ *    Saved sample responses pass expectedBags: null (structure only).
+ *  - Steps are 1 to opts.stepCount (default 12). Evidence ids are stepN (legacy panelN is accepted).
  *  - reported_quantities values must be positive safe integers (>0) with non-blank evidence
  *  - confirmed_quantity is ALWAYS forced to null (model cannot confirm)
  *  - Imported conflicts are IGNORED; conflicts are derived from reported_quantities
  *  - All imported strings are treated as untrusted (escaped at render time)
  *  - safety_verified must be false
  */
-function validateMetaImport(raw) {
+function validateMetaImport(raw, opts) {
+  const o = opts || {};
+  const stepCount = Number.isSafeInteger(o.stepCount) && o.stepCount >= 1 && o.stepCount <= MAX_STEPS ? o.stepCount : MAX_STEPS;
+  const expected = Array.isArray(o.expectedBags) ? [...new Set(o.expectedBags)].sort() : null;
   if (!raw || !Array.isArray(raw.bags) || raw.safety_verified !== false) {
     return { valid: false, error: 'Invalid format: bags array and safety_verified:false required' };
   }
-
-  if (raw.bags.length !== 3) {
-    return { valid: false, error: 'Exactly 3 bags (A, B, C) required (got ' + raw.bags.length + ')' };
+  if (raw.bags.length > ALL_BAG_IDS.length) {
+    return { valid: false, error: 'At most ' + ALL_BAG_IDS.length + ' bags (A to H) are allowed (got ' + raw.bags.length + ')' };
+  }
+  if (!expected && raw.bags.length < 1) {
+    return { valid: false, error: 'At least one bag is required (got 0)' };
   }
 
   const ids = new Set();
   try {
     const bags = raw.bags.map(b => {
-      if (typeof b.id !== 'string') throw new Error('Bag ID must be a string');
+      if (!b || typeof b.id !== 'string') throw new Error('Bag ID must be a string');
       const bid = b.id.trim();
-      if (!REQUIRED_BAG_IDS.includes(bid)) throw new Error('Invalid bag ID: ' + bid + ' (only A/B/C allowed)');
+      if (!ALL_BAG_IDS.includes(bid)) throw new Error('Invalid bag ID: ' + bid + ' (only A to H allowed)');
       if (ids.has(bid)) throw new Error('Duplicate bag ID: ' + bid);
       ids.add(bid);
       if (!Array.isArray(b.reported_quantities)) throw new Error('reported_quantities array required (bag ' + bid + ')');
 
       const reports = b.reported_quantities.map(r => {
-        if (!Number.isSafeInteger(r.value) || r.value < 1) throw new Error('Quantity must be a positive integer (bag ' + bid + ', value: ' + r.value + ')');
+        if (!r || !Number.isSafeInteger(r.value) || r.value < 1) throw new Error('Quantity must be a positive integer (bag ' + bid + ', value: ' + (r && r.value) + ')');
         const ev = typeof r.evidence === 'string' ? [r.evidence] : r.evidence ?? [];
         if (!Array.isArray(ev) || ev.length === 0 || ev.some(e => typeof e !== 'string' || !e.trim())) {
           throw new Error('Evidence missing or contains blank strings (bag ' + bid + ')');
@@ -111,14 +139,14 @@ function validateMetaImport(raw) {
         return { value: r.value, evidence: ev.map(e => String(e).trim()) };
       });
 
-      if (b.step !== null && b.step !== undefined && (!Number.isSafeInteger(b.step) || b.step < 1 || b.step > 5)) {
-        throw new Error('Step must be 1-5 or null (bag ' + bid + ')');
+      if (b.step !== null && b.step !== undefined && (!Number.isSafeInteger(b.step) || b.step < 1 || b.step > stepCount)) {
+        throw new Error('Step must be 1-' + stepCount + ' or null (bag ' + bid + ')');
       }
 
       return {
         id: bid,
         reports,
-        step: (b.step != null && Number.isSafeInteger(b.step) && b.step >= 1 && b.step <= 5) ? b.step : null,
+        step: (b.step != null && Number.isSafeInteger(b.step) && b.step >= 1 && b.step <= stepCount) ? b.step : null,
         evidence: typeof b.evidence === 'string' ? [b.evidence] : (Array.isArray(b.evidence) ? b.evidence.map(e => String(e)) : []),
         confirmed_quantity: null,
         model_confirmation_proposal: b.confirmed_quantity ?? null,
@@ -126,8 +154,12 @@ function validateMetaImport(raw) {
       };
     });
 
-    for (const rid of REQUIRED_BAG_IDS) {
-      if (!ids.has(rid)) throw new Error('Missing bag: ' + rid);
+    if (expected) {
+      const got = [...ids].sort();
+      const missing = expected.filter(x => !ids.has(x));
+      const extra = got.filter(x => !expected.includes(x));
+      if (missing.length) throw new Error('Missing bag ' + missing.join(', ') + ' (your notes mention it)');
+      if (extra.length) throw new Error('Extra bag ' + extra.join(', ') + ' (your notes do not mention it)');
     }
 
     const derivedConflicts = [];
@@ -154,7 +186,7 @@ function validateMetaImport(raw) {
       ? raw.visual_limitations.filter(l => typeof l === 'string').map(l => String(l))
       : [];
 
-    return { valid: true, bags, questions, conflicts: derivedConflicts, visual_limitations };
+    return { valid: true, bags, questions, conflicts: derivedConflicts, visual_limitations, stepCount: Number.isSafeInteger(o.stepCount) ? stepCount : null };
   } catch (e) {
     return { valid: false, error: e.message };
   }

@@ -43,9 +43,9 @@ const sampleInputs = JSON.parse(readFileSync(join(META_DIR, 'inputs.json'), 'utf
 const sampleSrc = readFileSync(join(PUBLIC, 'sample-data.js'), 'utf8');
 const sampleModule = new Function('structuredClone', `
   ${sampleSrc}
-  return { SAMPLE_INPUTS, SAMPLE_META_OUTPUTS, SEEDED_INPUT_HASH, REQUIRED_BAG_IDS, matchSeededInput, validateMetaImport };
+  return { SAMPLE_INPUTS, SAMPLE_META_OUTPUTS, SEEDED_INPUT_HASH, ALL_BAG_IDS, bagLettersFromNotes, evidenceStepNumber, matchSeededInput, validateMetaImport };
 `)(structuredClone);
-const { validateMetaImport, matchSeededInput, REQUIRED_BAG_IDS, SAMPLE_INPUTS, SAMPLE_META_OUTPUTS } = sampleModule;
+const { validateMetaImport, matchSeededInput, ALL_BAG_IDS, bagLettersFromNotes, evidenceStepNumber, SAMPLE_INPUTS, SAMPLE_META_OUTPUTS } = sampleModule;
 
 // =====================================================================
 // 1. Record safeguard invariants
@@ -214,19 +214,20 @@ describe('Regression: validateMetaImport bag validation', () => {
     confirmed_quantity: null, step, evidence: ['panel2']
   });
 
-  it('rejects empty bags array', () => {
+  it('rejects empty bags array when no bag set is expected', () => {
     const r = validateMetaImport({ bags: [], safety_verified: false });
     assert.equal(r.valid, false);
-    assert.match(r.error, /3/);
+    assert.match(r.error, /[Aa]t least one bag/);
   });
 
-  it('rejects only bag A (missing B and C)', () => {
-    const r = validateMetaImport({ bags: [baseBag('A')], safety_verified: false });
+  it('rejects only bag A when the notes mention A, B and C (missing B and C)', () => {
+    const r = validateMetaImport({ bags: [baseBag('A')], safety_verified: false }, { expectedBags: ['A', 'B', 'C'] });
     assert.equal(r.valid, false);
+    assert.match(r.error, /Missing bag B, C/);
   });
 
-  it('rejects bags A, B only (missing C)', () => {
-    const r = validateMetaImport({ bags: [baseBag('A'), baseBag('B', 4, 3)], safety_verified: false });
+  it('rejects bags A, B only when the notes mention C too', () => {
+    const r = validateMetaImport({ bags: [baseBag('A'), baseBag('B', 4, 3)], safety_verified: false }, { expectedBags: ['A', 'B', 'C'] });
     assert.equal(r.valid, false);
   });
 
@@ -236,10 +237,17 @@ describe('Regression: validateMetaImport bag validation', () => {
     assert.match(r.error, /[Dd]uplicate/);
   });
 
-  it('rejects bag D (invalid ID)', () => {
-    const r = validateMetaImport({ bags: [baseBag('A'), baseBag('B', 4, 3), baseBag('D', 4, 4)], safety_verified: false });
+  it('rejects bag Z (invalid ID) and bag I (beyond A to H)', () => {
+    assert.equal(validateMetaImport({ bags: [baseBag('A'), baseBag('Z', 4, 4)], safety_verified: false }).valid, false);
+    const r = validateMetaImport({ bags: [baseBag('A'), baseBag('I', 4, 4)], safety_verified: false });
     assert.equal(r.valid, false);
     assert.match(r.error, /[Ii]nvalid|allowed/);
+  });
+
+  it('rejects an extra bag D the notes never mention', () => {
+    const r = validateMetaImport({ bags: [baseBag('A'), baseBag('B', 4, 3), baseBag('C', 4, 4), baseBag('D', 4, 4)], safety_verified: false }, { expectedBags: ['A', 'B', 'C'] });
+    assert.equal(r.valid, false);
+    assert.match(r.error, /Extra bag D/);
   });
 
   it('accepts exactly A, B, C', () => {

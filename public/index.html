@@ -41,21 +41,26 @@
       </div>
 
       <div class="input-grid">
-        <div class="block photo-block">
+        <div class="block photo-block" id="photo-block">
           <h3 id="h-photo">Photo of your steps</h3>
-          <div class="image-upload-area" id="image-area">
+          <div class="image-upload-area static" id="image-area">
             <img id="preview-img" src="fixtures/synthetic-shelf.png" alt="Five numbered photos of a small wooden bookshelf being taken apart, with zip bags labeled A, B and C appearing in later photos">
           </div>
-          <p class="hint" id="photo-caption">AI-generated test photo of a bookshelf taken apart in five steps. It is not a real disassembly. <span id="custom-image-badge" class="your-photo" hidden>You chose your own photo.</span></p>
-          <input type="file" id="image-input" accept="image/*" hidden aria-label="Choose a photo from your device">
-          <button type="button" class="btn btn-outline btn-sm" id="btn-change-image">Choose your own photo</button>
+          <p class="hint" id="photo-caption">AI-generated test photo of a bookshelf taken apart in five steps. It is not a real disassembly. In the sample, the five steps share this one photo.</p>
         </div>
 
         <div class="notes-col">
           <div class="block">
             <h3 id="h-notes">Notes for each step</h3>
-            <p class="hint">One line per photo. Say which bag the screws went in and how many.</p>
+            <p class="hint" id="notes-hint">One line per photo. Say which bag the screws went in and how many.</p>
             <div id="notes-container"></div>
+            <div class="step-edit-bar" id="step-edit-bar" hidden>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-add-step">Add step</button>
+            </div>
+            <div id="own-record-bar">
+              <p class="hint">Want to record your own project? Start with two steps and add up to twelve, one photo and one line each.</p>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-own-record">Start my own record</button>
+            </div>
           </div>
 
           <div class="actions">

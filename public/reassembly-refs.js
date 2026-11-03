@@ -4,7 +4,8 @@
  * Loads as a browser global or via CommonJS-style `module.exports`.
  */
 (function (root) {
-  function norm(s) { return String(s).trim().toLowerCase(); }
+  // Evidence ids are stepN. Legacy panelN means the same thing.
+  function norm(s) { return String(s).trim().toLowerCase().replace(/^panel(\d+)$/, 'step$1'); }
 
   // Returns reversed steps: { step, refNumber, notes: [{bag, confirmed, corrections:[recordedValue]}] }
   function buildReassemblyRefs(record, extraction, stepMappings, notes) {
@@ -41,7 +42,7 @@
       });
       const original = step.action && step.action.value != null
         ? step.action.value
-        : ((originalNotes.find((n) => 'panel' + n.panel === (step.evidence || [])[0]) || {}).note || '');
+        : ((originalNotes.find((n) => 'step' + n.panel === norm((step.evidence || [])[0] || '')) || {}).note || '');
       return { step, refNumber: i + 1, originalNote: original, lines };
     });
   }

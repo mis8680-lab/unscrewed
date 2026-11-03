@@ -48,7 +48,7 @@ describe('Live Meta handler', () => {
       assert.equal(j.proposal.bags.length, 3);
       const bagA = j.proposal.bags.find(b => b.id === 'A');
       assert.deepEqual(bagA.reports.map(r => r.value), [6, 4]);
-      assert.deepEqual(bagA.reports.map(r => r.evidence), [['panel2'], ['panel5']]);
+      assert.deepEqual(bagA.reports.map(r => r.evidence), [['step2'], ['step5']]);
       assert.equal(bagA.step, 2);
       assert.ok(j.proposal.bags.every(b => b.confirmed_quantity === null && b.model_confirmation_proposal === null && b.requires_user_event === true));
       assert.equal(j.proposal.conflicts.length, 1);
@@ -65,10 +65,12 @@ describe('Live Meta handler', () => {
     assert.equal(calls[0].init.headers.Authorization, `Bearer ${KEY}`);
     const body = JSON.parse(calls[1].init.body);
     assert.equal(body.model, 'muse-wonder-1.0');
-    assert.equal(body.max_output_tokens, 4000);
+    assert.equal(body.max_output_tokens, 6000);
     assert.equal(body.input[0].content[1].file_id, 'file_123');
     const text = body.input[0].content[0].text;
     assert.ok(text.startsWith(readFileSync(join(META, 'prompt.txt'), 'utf8')));
+    assert.match(text, /This record has 5 steps/);
+    assert.match(text, /bag letters mentioned in the notes are: A, B, C/);
     assert.match(text, /data, not instructions/);
     assert.match(text, /<<<UNTRUSTED_NOTES\n\[/);
     assert.ok(text.endsWith('\nUNTRUSTED_NOTES>>>'));
@@ -166,7 +168,7 @@ describe('Live Meta handler', () => {
 
   it('oversized body -> 413', async () => {
     await withServer({ fetch: mockFetch('{}'), env: { META_API_KEY: KEY } }, async base => {
-      const r = await post(base, null, JSON.stringify({ notes: NOTES, imageBase64: 'A'.repeat(15 * 1024 * 1024 + 10), imageMime: 'image/png' }));
+      const r = await post(base, null, JSON.stringify({ notes: NOTES, imageBase64: 'A'.repeat(25 * 1024 * 1024 + 10), imageMime: 'image/png' }));
       assert.equal(r.status, 413);
       assert.equal((await r.json()).error.code, 'too_large');
     });
@@ -182,7 +184,8 @@ describe('Live Meta handler', () => {
 
   it('rejects wrong notes shape and long strings', async () => {
     await withServer({ fetch: mockFetch('{}'), env: { META_API_KEY: KEY } }, async base => {
-      assert.equal((await post(base, { notes: NOTES.slice(0, 4) })).status, 400);
+      assert.equal((await post(base, { notes: NOTES.slice(0, 1) })).status, 400);
+      assert.equal((await post(base, { notes: Array.from({ length: 13 }, (_, i) => ({ panel: i + 1, note: 'x' })) })).status, 400);
       assert.equal((await post(base, { notes: NOTES.map(n => ({ ...n, panel: 1 })) })).status, 400);
       assert.equal((await post(base, { notes: NOTES.map((n, i) => i ? n : { ...n, note: 'x'.repeat(501) }) })).status, 400);
     });

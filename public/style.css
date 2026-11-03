@@ -333,3 +333,13 @@ h2 + .block, h2 + div > .block:first-child { border-top: none; }
 .voice-status { font-size: 0.875rem; color: var(--muted); }
 .voice-hint { margin: 4px 0 0; color: var(--ink); font-weight: 600; }
 .mic-btn[aria-pressed="true"] { border-color: #B3261E; color: #B3261E; }
+
+/* Flexible steps: per-step photo, add and remove */
+.panel-note.with-photo { border-top: 1px solid var(--rule); padding: 12px 0; }
+.step-body { min-width: 0; }
+.step-photo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.step-thumb { width: 96px; height: 72px; object-fit: cover; border: 1px solid var(--rule); background: #fff; }
+.step-nophoto { display: inline-flex; align-items: center; justify-content: center; width: 96px; height: 72px; border: 1px dashed var(--muted); color: var(--muted); font-size: 0.8125rem; text-align: center; }
+.step-edit-bar, #own-record-bar { margin: 12px 0; }
+.image-upload-area.static { cursor: default; }
+.image-upload-area.static:hover { border-color: var(--rule); }
