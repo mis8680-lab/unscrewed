@@ -17,7 +17,7 @@ Everything in this repository was created during the hackathon build period (Oct
 - **Validation pipeline** (`public/sample-data.js`, `lib/validate-output.mjs`): structural validation of Meta JSON. Bags come from Meta's answer (letters A to H, at most 8) joined with any bags the notes name; a bag the notes do not name stays visible with "Check this bag". Quantities must be positive integers, evidence ids are `stepN` (legacy `panelN` is still accepted), evidence must be non-blank, and conflicts are derived from reports (imported conflict status is ignored).
 - **Three sample scenarios**: Normal (all data present), Missing (bag B has no quantity or step), Conflict (bag A reported as 6 and as 4). The five steps of a sample share one contact-sheet photo. Each is backed by a saved Meta Playground response in `fixtures/meta/`.
 - **Live Meta pipeline** (`lib/live-meta.mjs`): server-side calls to the Meta Model API with request checks (same-origin plus `X-Unscrewed` header, rate limit, image and WAV header checks, body deadline), notes passed as fenced untrusted data, and a fail-soft deterministic check of every reported quantity against the cited note (digits or number words). A number the note does not state stays visible as "Meta read N from step K. We couldn't find that number in your note. Check it.", is never used to prefill the confirm box and never settles a conflict.
-- **Test suite**: 271 tests covering safeguard invariants, validation rules, the live pipeline and voice endpoint (with a mocked Meta API), fixture integrity, and UI contract checks.
+- **Test suite**: 284 tests covering safeguard invariants, validation rules, the live pipeline and voice endpoint (with a mocked Meta API), fixture integrity, and UI contract checks.
 
 ## Meta model usage
 
@@ -51,7 +51,7 @@ node server.mjs
 
 Source: https://github.com/mis8680-lab/unscrewed
 
-Run tests from the repo root (271 tests):
+Run tests from the repo root (284 tests):
 
 ```bash
 node --test
@@ -90,6 +90,7 @@ test/observations.test.mjs   # Photo observation rules
 test/bugfixes.test.mjs       # Regression tests for QA and review fixes
 test/probes.test.mjs         # Bag letter and quantity parsing probes
 test/failsoft.test.mjs       # Spoken-note probes: no live block, no silent wrong prefill
+test/review3.test.mjs        # Prefill agreement rule and count-filter bypass regressions
 fixtures/meta/               # Saved muse-wonder-1.0 responses, prompt, inputs
 fixtures/synthetic-shelf.png # AI-generated test image
 ```
