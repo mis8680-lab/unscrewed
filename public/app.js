@@ -32,6 +32,7 @@
       editedNotes: null,
       extractionResult: null,
       extractionInputHash: null,
+      extractionMeta: null,
       actionLog: [],
     };
   }
@@ -62,6 +63,10 @@
             parsed.extractionResult = null;
           }
         }
+        if (!parsed.extractionResult || !parsed.extractionMeta || parsed.extractionMeta.mode !== 'live' ||
+            typeof parsed.extractionMeta.model !== 'string') {
+          parsed.extractionMeta = null;
+        }
         if (!Array.isArray(parsed.actionLog)) parsed.actionLog = [];
         return { ...defaultState(), ...parsed };
       }
@@ -77,6 +82,7 @@
       editedNotes: state.editedNotes,
       extractionResult: state.extractionResult,
       extractionInputHash: state.extractionInputHash,
+      extractionMeta: state.extractionMeta,
       actionLog: state.actionLog,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
@@ -209,6 +215,7 @@
 
   function invalidateExtraction(reason) {
     state.extractionResult = null;
+    state.extractionMeta = null;
     state.extractionInputHash = null;
     currentRecord = null;
     confirmations = {};
@@ -271,6 +278,7 @@
         return;
       }
       state.extractionResult = validated;
+      state.extractionMeta = null;
       state.extractionInputHash = hashNotes(notes);
       currentRecord = null;
       confirmations = {};
@@ -280,6 +288,7 @@
       goToStep('review');
     } else {
       state.extractionResult = null;
+      state.extractionMeta = null;
       saveState();
       if (state.customImage) {
         toast('Custom image in use - please use Import Meta JSON Directly');
@@ -287,6 +296,96 @@
         toast('No sample data - please use Import Meta JSON Directly');
       }
       goToStep('review');
+    }
+  });
+
+  // -- Live mode ---------------------------------------------------------
+  let liveAvailable = false;
+  let liveModel = 'muse-wonder-1.0';
+  const liveBtn = $('#btn-live');
+  const liveStatus = $('#live-status');
+
+  function setLiveStatus(msg, isError) {
+    liveStatus.textContent = msg || '';
+    liveStatus.className = 'live-status' + (isError ? ' live-error' : '');
+  }
+
+  async function initLiveStatus() {
+    try {
+      const r = await fetch('api/status');
+      const j = await r.json();
+      liveAvailable = j.live === true;
+      if (typeof j.model === 'string') liveModel = j.model;
+    } catch { liveAvailable = false; }
+    $('#mode-badge').textContent = liveAvailable ? 'Live: Meta ' + liveModel : 'Sample Mode';
+    liveBtn.disabled = !liveAvailable;
+    if (!liveAvailable) setLiveStatus('Live mode needs META_API_KEY in .env on the server. Sample mode works without it.', false);
+  }
+
+  // The server returns the already-sanitized shape (bags[].reports). Convert it back to the import shape
+  // and run the app validator again so the browser never trusts the server blindly either.
+  function toImportShape(p) {
+    if (!p || !Array.isArray(p.bags)) return null;
+    return {
+      safety_verified: false,
+      bags: p.bags.map(b => ({
+        id: b && b.id,
+        reported_quantities: Array.isArray(b && b.reports) ? b.reports : [],
+        step: b ? b.step : null,
+        evidence: b ? b.evidence : [],
+        confirmed_quantity: null
+      })),
+      questions: p.questions,
+      visual_limitations: p.visual_limitations
+    };
+  }
+
+  liveBtn.addEventListener('click', async () => {
+    if (!liveAvailable || liveBtn.disabled) return;
+    const notes = getCurrentNotes();
+    const body = { notes };
+    if (state.customImage) {
+      const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(state.customImage);
+      if (!m) { setLiveStatus('Live mode supports PNG, JPEG or WebP images only.', true); return; }
+      body.imageMime = m[1];
+      body.imageBase64 = m[2];
+    }
+    liveBtn.disabled = true;
+    $('#btn-extract').disabled = true;
+    liveBtn.textContent = 'Calling Meta... (can take up to 60s)';
+    setLiveStatus('Uploading image and waiting for the model...', false);
+    try {
+      const r = await fetch('api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PackBack': '1' }, body: JSON.stringify(body) });
+      let j;
+      try { j = await r.json(); } catch { j = null; }
+      if (!r.ok || !j || j.error) {
+        const e = (j && j.error) || {};
+        setLiveStatus('Live call failed (' + (e.code || 'http_' + r.status) + '): ' + (e.message || 'unknown error'), true);
+        logAction('live_failed', e.code || r.status);
+        return;
+      }
+      const validated = validateMetaImport(toImportShape(j.proposal));
+      if (!validated.valid) {
+        setLiveStatus('Live response rejected by the app validator: ' + validated.error, true);
+        logAction('live_rejected', validated.error);
+        return;
+      }
+      state.extractionResult = validated;
+      state.extractionMeta = { mode: 'live', model: String(j.model), latencyMs: Number(j.latencyMs) || 0, usage: j.usage && typeof j.usage === 'object' ? j.usage : null };
+      state.extractionInputHash = hashNotes(notes);
+      currentRecord = null;
+      confirmations = {};
+      stepMappings = {};
+      saveState();
+      logAction('extraction_live', j.model);
+      setLiveStatus('', false);
+      goToStep('review');
+    } catch {
+      setLiveStatus('Live call failed: could not reach the local server.', true);
+    } finally {
+      liveBtn.textContent = 'Run with Meta (live)';
+      liveBtn.disabled = !liveAvailable;
+      $('#btn-extract').disabled = false;
     }
   });
 
@@ -323,11 +422,23 @@
 
     $('#btn-to-confirm').disabled = false;
 
-    bannerC.innerHTML = `
+    const meta = state.extractionMeta;
+    if (meta && meta.mode === 'live') {
+      const tok = meta.usage && typeof meta.usage === 'object'
+        ? ['input_tokens', 'output_tokens', 'total_tokens'].filter(k => Number.isFinite(meta.usage[k])).map(k => k.replace('_tokens', '') + ' ' + meta.usage[k]).join(', ')
+        : '';
+      bannerC.innerHTML = `
+      <div class="sample-banner live-banner">
+        <span class="icon">[LIVE]</span>
+        Meta ${esc(meta.model)} response - ${esc(Math.round(meta.latencyMs / 100) / 10)}s${tok ? ', tokens: ' + esc(tok) : ''}. Model output is a proposal only; nothing is confirmed until you click.
+      </div>`;
+    } else {
+      bannerC.innerHTML = `
       <div class="sample-banner">
         <span class="icon">[SAMPLE]</span>
         Saved Meta test response / Sample mode - not a live API call
       </div>`;
+    }
 
     result.bags.forEach(bag => {
       const hasReports = bag.reports && bag.reports.length > 0;
@@ -357,7 +468,7 @@
             '<span class="bag-id">Bag ' + esc(bag.id) + '</span>' +
             '<span class="bag-status ' + statusClass + '">' + esc(statusText) + '</span>' +
           '</div>' +
-          '<div class="bag-detail">Step: <strong>' + (bag.step !== null ? esc(bag.step) : 'Unassigned') + '</strong></div>' +
+          '<div class="bag-detail">Suggested step (not confirmed): <strong>' + (bag.step !== null ? esc(bag.step) : 'None') + '</strong></div>' +
           '<div class="bag-detail">Model confirmation proposal: <strong>' + (bag.model_confirmation_proposal !== null ? esc(bag.model_confirmation_proposal) : 'null (expected)') + '</strong></div>' +
           '<div class="bag-detail">User confirmation required: <strong style="color:var(--primary)">Yes</strong></div>' +
           reportsHtml +
@@ -403,6 +514,7 @@
     const validated = validateMetaImport(parsed);
     if (!validated.valid) { toast('Validation failed: ' + validated.error); return; }
     state.extractionResult = validated;
+    state.extractionMeta = null;
     state.extractionInputHash = hashNotes(getCurrentNotes());
     currentRecord = null;
     confirmations = {};
@@ -446,7 +558,7 @@
         name: 'Bag ' + bag.id + ' screws',
         quantity: qty,
         storage: 'Bag ' + bag.id,
-        linkedStep: bag.step,
+        linkedStep: null,
         source: 'user_reported',
         evidence: ev
       });
@@ -472,9 +584,7 @@
     confirmations = {};
     stepMappings = {};
 
-    ext.bags.forEach(bag => {
-      stepMappings[bag.id] = bag.step;
-    });
+    // Model steps are suggestions only; stepMappings stays empty until the user confirms each bag.
 
     logAction('record_built', ext.bags.length + ' bags');
   }
@@ -503,6 +613,12 @@
       const confirmedVal = confirmations[bag.id];
       const hasConflict = unresolvedConflicts.some(c => c.fieldPath === 'parts.' + partId + '.quantity');
       const defaultVal = bag.reports[0]?.value ?? '';
+      const mappedStep = stepMappings[bag.id];
+      const stepDefault = mappedStep != null ? mappedStep : bag.step;
+      const stepSelect = '<select id="step-map-' + esc(bag.id) + '" data-map-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+        '<option value="">Select step</option>' +
+        VALID_STEPS.map(st => '<option value="' + st + '"' + (stepDefault === st ? ' selected' : '') + '>Step ' + st + '</option>').join('') +
+        '</select>';
 
       container.innerHTML +=
         '<div class="bag-card ' + (isConfirmed ? 'confirmed' : hasConflict ? 'conflict' : '') + '" id="confirm-bag-' + esc(bag.id) + '">' +
@@ -520,9 +636,10 @@
             '</div>'
           : '<div class="bag-detail" style="color:var(--danger)">No reported quantity</div>') +
           '<div class="confirm-section">' +
-            '<label>Enter confirmed quantity (Bag ' + esc(bag.id) + ')</label>' +
+            '<label>Confirm quantity and step together (Bag ' + esc(bag.id) + ')</label>' +
             '<div class="confirm-row">' +
-              '<input type="number" id="qty-' + esc(bag.id) + '" min="1" max="999" value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '" data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+              '<input type="number" id="qty-' + esc(bag.id) + '" min="1" max="999" ' + (hasConflict && !isConfirmed ? 'value="" placeholder="Recount and enter"' : 'value="' + esc(isConfirmed ? confirmedVal : defaultVal) + '"') + ' data-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
+              stepSelect +
               '<button class="btn btn-primary btn-sm" data-confirm-bag="' + esc(bag.id) + '"' + (isConfirmed ? ' disabled' : '') + '>' +
                 (isConfirmed ? 'Confirmed' : 'Confirm') +
               '</button>' +
@@ -534,34 +651,15 @@
 
     const hasMissingMapping = REQUIRED_BAGS.some(id => stepMappings[id] == null);
     if (hasMissingMapping) {
-      let mappingHtml = '<div class="card missing" style="border-left:4px solid var(--danger)">' +
-        '<div class="card-title">Step Mapping Required</div>' +
-        '<div class="card-subtitle">Select the missing step mappings. Every bag must have a step assigned.</div>';
-
-      REQUIRED_BAGS.forEach(id => {
-        if (stepMappings[id] == null) {
-          mappingHtml +=
-            '<div class="mapping-row" style="margin-bottom:8px">' +
-              '<label style="font-weight:600">Bag ' + esc(id) + ' step:</label>' +
-              '<div class="confirm-row" style="margin-top:4px">' +
-                '<select id="step-map-' + esc(id) + '" data-map-bag="' + esc(id) + '">' +
-                  '<option value="">Select</option>' +
-                  VALID_STEPS.map(s => '<option value="' + s + '">Step ' + s + '</option>').join('') +
-                '</select>' +
-                '<button class="btn btn-primary btn-sm" data-confirm-mapping="' + esc(id) + '">Confirm mapping</button>' +
-              '</div>' +
-            '</div>';
-        } else {
-          mappingHtml +=
-            '<div class="mapping-row" style="margin-bottom:4px">' +
-              '<span>Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</span>' +
-              '<span class="bag-status confirmed" style="margin-left:8px">Mapped</span>' +
-            '</div>';
-        }
-      });
-
-      mappingHtml += '</div>';
-      mappingC.innerHTML = mappingHtml;
+      mappingC.innerHTML =
+        '<div class="card missing" style="border-left:4px solid var(--danger)">' +
+          '<div class="card-title">Step Mapping Required</div>' +
+          '<div class="card-subtitle">Pick a step for each bag and click its Confirm button. The model step is only a suggestion.</div>' +
+          REQUIRED_BAGS.map(id => stepMappings[id] == null
+            ? '<div class="bag-detail">Bag ' + esc(id) + ': not confirmed</div>'
+            : '<div class="mapping-row"><span>Bag ' + esc(id) + ': Step ' + esc(stepMappings[id]) + '</span><span class="bag-status confirmed" style="margin-left:8px">Mapped</span></div>'
+          ).join('') +
+        '</div>';
     } else {
       mappingC.innerHTML =
         '<div class="card confirmed" style="border-left:4px solid var(--success)">' +
@@ -595,26 +693,6 @@
     if (revokeBtn) doRevoke(revokeBtn.dataset.revokeBag);
   });
 
-  $('#confirm-mappings-container').addEventListener('click', (e) => {
-    const mapBtn = e.target.closest('[data-confirm-mapping]');
-    if (!mapBtn) return;
-    const bagId = mapBtn.dataset.confirmMapping;
-    const select = $('#step-map-' + bagId);
-    if (!select) return;
-    const val = parseInt(select.value, 10);
-    if (!VALID_STEPS.includes(val)) {
-      toast('Please select a valid step (1-5)');
-      return;
-    }
-    stepMappings[bagId] = val;
-    if (currentRecord) {
-      currentRecord.updatePartField('screws_' + bagId, 'linkedStep', val, 'user_confirmed', ['user_ui_mapping'], 'User step mapping');
-    }
-    logAction('step_mapped', bagId + '=' + val);
-    toast('Bag ' + bagId + ': mapped to step ' + val);
-    renderConfirm();
-  });
-
   function doConfirm(bagId) {
     if (!currentRecord) { toast('No record'); return; }
     const input = $('#qty-' + bagId);
@@ -623,6 +701,12 @@
 
     if (!Number.isSafeInteger(val) || val < 1) {
       toast('Quantity must be a positive integer (1 or more)');
+      return;
+    }
+    const stepSel = $('#step-map-' + bagId);
+    const stepVal = stepSel ? parseInt(stepSel.value, 10) : NaN;
+    if (!VALID_STEPS.includes(stepVal)) {
+      toast('Please select a valid step (1-5) before confirming');
       return;
     }
 
@@ -640,7 +724,10 @@
       currentRecord.confirmPartField(partId, 'quantity', val, ['user_ui_confirm']);
     }
 
+    stepMappings[bagId] = stepVal;
+    currentRecord.updatePartField(partId, 'linkedStep', stepVal, 'user_confirmed', ['user_ui_mapping'], 'User step mapping');
     confirmations[bagId] = val;
+    logAction('step_mapped', bagId + '=' + stepVal);
     logAction('quantity_confirmed', bagId + '=' + val);
     toast('Bag ' + bagId + ': ' + val + ' confirmed');
     renderConfirm();
@@ -651,6 +738,7 @@
     const prevConfirmations = { ...confirmations };
     const prevMappings = { ...stepMappings };
     delete prevConfirmations[bagId];
+    delete prevMappings[bagId];
 
     buildRecordFromExtraction();
 
@@ -669,6 +757,9 @@
           currentRecord.confirmPartField(partId, 'quantity', val, ['user_ui_confirm']);
         }
         confirmations[id] = val;
+        if (prevMappings[id] != null) {
+          currentRecord.updatePartField(partId, 'linkedStep', prevMappings[id], 'user_confirmed', ['user_ui_mapping'], 'User step mapping');
+        }
       }
     }
 
@@ -896,5 +987,6 @@
   // -- Init ------------------------------------------------------------
   renderInput();
   goToStep(state.currentStep || 'input');
+  initLiveStatus();
 
 })();

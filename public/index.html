@@ -9,7 +9,7 @@
 <body>
   <header class="app-header">
     <h1>PackBack</h1>
-    <span class="badge">Sample Mode</span>
+    <span class="badge" id="mode-badge">Sample Mode</span>
   </header>
 
   <main class="main">
@@ -53,6 +53,8 @@
         <button class="btn btn-primary btn-full" id="btn-extract">
           Run Extraction (Saved Meta Response)
         </button>
+        <button class="btn btn-outline btn-full" id="btn-live" disabled>Run with Meta (live)</button>
+        <div id="live-status" class="live-status" role="status" aria-live="polite"></div>
       </div>
     </section>
 

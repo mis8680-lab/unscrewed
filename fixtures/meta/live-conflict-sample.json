@@ -1,0 +1,87 @@
+{
+  "bags": [
+    {
+      "id": "A",
+      "reported_quantities": [
+        {
+          "value": 6,
+          "evidence": "panel2"
+        },
+        {
+          "value": 4,
+          "evidence": "panel5"
+        }
+      ],
+      "confirmed_quantity": null,
+      "step": 2,
+      "evidence": [
+        "panel2",
+        "panel5"
+      ]
+    },
+    {
+      "id": "B",
+      "reported_quantities": [
+        {
+          "value": 4,
+          "evidence": "panel3"
+        },
+        {
+          "value": 4,
+          "evidence": "panel5"
+        }
+      ],
+      "confirmed_quantity": null,
+      "step": 3,
+      "evidence": [
+        "panel3",
+        "panel5"
+      ]
+    },
+    {
+      "id": "C",
+      "reported_quantities": [
+        {
+          "value": 4,
+          "evidence": "panel4"
+        },
+        {
+          "value": 4,
+          "evidence": "panel5"
+        }
+      ],
+      "confirmed_quantity": null,
+      "step": 4,
+      "evidence": [
+        "panel4",
+        "panel5"
+      ]
+    }
+  ],
+  "questions": [
+    "What is the count-checked confirmed quantity for bag A: 6 from panel2 or 4 from panel5?",
+    "Have bags B and C each been count-checked and confirmed as 4 screws?",
+    "Has bag A been rechecked after the conflicting reports?"
+  ],
+  "conflicts": [
+    {
+      "bag": "A",
+      "values": [
+        {
+          "value": 6,
+          "evidence": "panel2"
+        },
+        {
+          "value": 4,
+          "evidence": "panel5"
+        }
+      ],
+      "status": "unresolved"
+    }
+  ],
+  "visual_limitations": [
+    "Tiny screws cannot be reliably counted from this contact sheet, so visual quantity is unknown.",
+    "Visual appearance does not override the user records or create numeric conflicts."
+  ],
+  "safety_verified": false
+}

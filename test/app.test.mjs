@@ -473,7 +473,7 @@ describe('Regression: step mapping gate in app logic', () => {
 
   it('app.js has step mapping UI for missing mappings', () => {
     const appSrc = readFileSync(join(PUBLIC, 'app.js'), 'utf8');
-    assert.ok(appSrc.includes('confirm-mapping'), 'app.js must have mapping confirmation buttons');
+    assert.ok(appSrc.includes('data-map-bag'), 'app.js must have per-bag step selects confirmed with the quantity');
     assert.ok(appSrc.includes('step-map-'), 'app.js must have step mapping select elements');
   });
 });
@@ -565,5 +565,22 @@ describe('buildReassemblyRefs', () => {
     assert.ok(appSrc.includes('esc(l.text)') && appSrc.includes('esc(c)') && appSrc.includes('esc(ref.originalNote)'));
     assert.ok(!/\u2014/.test(refsSrc));
     assert.ok(readFileSync(join(PUBLIC, 'index.html'), 'utf8').includes('reassembly-refs.js'));
+  });
+});
+
+describe('Regression: conflicted bag quantity input and mobile nav', () => {
+  const appSrc = readFileSync(join(PUBLIC, 'app.js'), 'utf8');
+  it('conflicted bag input starts empty with recount placeholder', () => {
+    assert.ok(appSrc.includes('hasConflict && !isConfirmed ? \'value="" placeholder="Recount and enter"\''));
+  });
+  it('prefill only applies to non-conflicted bags', () => {
+    const i = appSrc.indexOf('hasConflict && !isConfirmed');
+    assert.ok(i > 0);
+    assert.ok(appSrc.slice(i, i + 300).includes('defaultVal'));
+  });
+  it('step nav buttons can shrink and wrap on narrow screens', () => {
+    const css = readFileSync(join(PUBLIC, 'style.css'), 'utf8');
+    const block = css.slice(css.indexOf('.steps-nav button {'), css.indexOf('.steps-nav button.active'));
+    assert.ok(block.includes('min-width: 0') && !block.includes('nowrap'));
   });
 });

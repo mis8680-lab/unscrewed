@@ -22,7 +22,8 @@ Everything in this repository was created during the hackathon build period (Oct
   - Missing data: when notes do not give a quantity or step, those fields stay null and a follow-up question is asked.
   - Safety boundary: the model never sets `confirmed_quantity` or `safety_verified` to true. The app strips any such attempt and requires the user to confirm each quantity with an explicit click.
 - **Saved responses**: the app currently runs on real `muse-wonder-1.0` responses captured in the Playground and stored in `fixtures/meta/` (`normal.json`, `missing.json`, `conflict.json`). The prompt used is `fixtures/meta/prompt.txt` and the matching notes are `fixtures/meta/inputs.json`.
-- **Live mode (planned, not implemented)**: a server-side call using `META_API_KEY` (see `.env.example`) is planned. It does not work yet. There is no live API call anywhere in this repo today, and the key is never sent to the browser.
+- **Live mode**: works with your own Meta Model API key. Run `cp .env.example .env`, put your key in `META_API_KEY`, then start with `node --env-file=.env server.mjs`. The server uploads the image to `POST /v1/files`, calls `POST /v1/responses` with `fixtures/meta/prompt.txt` plus your notes, strips code fences, and validates the JSON with both `lib/validate-output.mjs` and the app's import rules before returning it. The key stays on the server and is never sent to the browser. `GET /api/status` reports whether live mode is available; `POST /api/extract` runs a call (15MB body limit, PNG/JPEG/WebP, exactly 5 notes of up to 500 characters, 60s timeout). Typed errors: `no_key`, `upstream_http`, `invalid_json`, `schema_invalid`, `timeout`. Live output is a proposal only: every confirmation still needs an explicit click.
+- **Sample mode** works without a key: the header shows "Sample Mode" and the live button is disabled. `fixtures/meta/live-conflict-sample.json` is one validated live response for the conflict notes.
 
 ## Synthetic test image
 
@@ -36,6 +37,7 @@ Requires Node.js 20 or newer. No dependencies to install.
 node server.mjs
 # http://127.0.0.1:4173
 # Change port: PORT=3000 node server.mjs
+# Live mode: node --env-file=.env server.mjs
 ```
 
 Run tests from the repo root:
@@ -48,7 +50,7 @@ node --test
 
 | Area | Status |
 |------|--------|
-| Live Meta API integration | Not implemented. Saved Playground responses only. |
+| Live Meta API integration | Works with your own key in `.env`. Without a key, saved Playground responses only. |
 | Image analysis | Local upload for preview only. No visual counting. |
 | Multi-user support | Single browser, localStorage only. |
 | Synthetic image | AI-generated test fixture, not a real disassembly. |

@@ -34,20 +34,30 @@ body {
 .app-header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
   position: sticky;
   top: 0;
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
 }
 .app-header h1 {
   font-size: 1.125rem;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
+.app-header h1 { min-width: 0; }
 .app-header .badge {
+  flex: 0 1 auto;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-size: 0.6875rem;
   background: var(--warning);
   color: #fff;
@@ -60,6 +70,7 @@ body {
 /* Steps nav */
 .steps-nav {
   display: flex;
+  max-width: 100%;
   gap: 4px;
   margin-bottom: 20px;
   background: var(--surface);
@@ -78,7 +89,9 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
-  white-space: nowrap;
+  white-space: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .steps-nav button.active {
   background: var(--primary);
@@ -548,3 +561,8 @@ body {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
 }
+
+.live-banner { background: linear-gradient(135deg, #0a7d4b 0%, #0f5f8a 100%); }
+.live-status { font-size: 0.8125rem; color: var(--text-secondary, #555); margin-top: 6px; min-height: 1em; }
+.live-status.live-error { color: var(--danger, #c0392b); font-weight: 600; }
+.btn-group { flex-wrap: wrap; } .btn-group .live-status { flex-basis: 100%; }

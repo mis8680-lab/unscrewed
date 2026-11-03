@@ -6,11 +6,12 @@
  */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createApiHandler } from './lib/live-meta.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const PUBLIC = join(__dirname, 'public');
+const PUBLIC = resolve(__dirname, 'public');
 const SHELF_IMAGE = join(__dirname, 'fixtures', 'synthetic-shelf.png');
 const HOST = '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '4173', 10);
@@ -29,16 +30,21 @@ const MIME = {
   '.ico':  'image/x-icon',
 };
 
-const server = createServer(async (req, res) => {
+export function createApp(opts) {
+  const api = createApiHandler(opts);
+  return async (req, res) => {
   const url = new URL(req.url, `http://${HOST}`);
+  if (await api(req, res, url.pathname)) return;
   let pathname = url.pathname === '/' ? '/index.html' : url.pathname;
 
-  // Security: no directory traversal
-  if (pathname.includes('..')) {
+  // Security: resolve and require the result to stay inside the public root
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { res.writeHead(400); res.end('Bad request'); return; }
+  if (decoded.includes('\0')) { res.writeHead(400); res.end('Bad request'); return; }
+  const filePath = decoded === '/fixtures/synthetic-shelf.png' ? SHELF_IMAGE : resolve(PUBLIC, '.' + decoded);
+  if (filePath !== SHELF_IMAGE && !filePath.startsWith(PUBLIC + sep)) {
     res.writeHead(400); res.end('Bad request'); return;
   }
-
-  const filePath = pathname === '/fixtures/synthetic-shelf.png' ? SHELF_IMAGE : join(PUBLIC, pathname);
   try {
     const data = await readFile(filePath);
     const ext = extname(filePath);
@@ -48,8 +54,11 @@ const server = createServer(async (req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('404 Not Found');
   }
-});
+  };
+}
 
-server.listen(PORT, HOST, () => {
-  console.log(`PackBack MVP -> http://${HOST}:${PORT}`);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  createServer(createApp()).listen(PORT, HOST, () => {
+    console.log(`PackBack MVP -> http://${HOST}:${PORT} (${process.env.META_API_KEY ? 'live' : 'sample only'})`);
+  });
+}
