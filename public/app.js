@@ -76,6 +76,10 @@
             parsed.extractionResult = null;
           }
         }
+        if (parsed.extractionResult) {
+          const sc = Number.isSafeInteger(parsed.extractionResult.stepCount) ? parsed.extractionResult.stepCount : 12;
+          parsed.extractionResult.observations = sanitizeObservations(parsed.extractionResult.observations, sc).observations;
+        }
         if (!parsed.extractionResult || !parsed.extractionMeta || parsed.extractionMeta.mode !== 'live' ||
             typeof parsed.extractionMeta.model !== 'string') {
           parsed.extractionMeta = null;
@@ -554,7 +558,8 @@
         confirmed_quantity: null
       })),
       questions: p.questions,
-      visual_limitations: p.visual_limitations
+      visual_limitations: p.visual_limitations,
+      observations: p.observations
     };
   }
 
@@ -610,6 +615,17 @@
     }
   });
 
+  // Observations are what Meta says it sees in a step photo. Suggestions to check, never confirmed facts.
+  function observationsHtml(list, heading) {
+    if (!list || !list.length) return '';
+    return '<div class="seen-box"><div class="seen-title">' + esc(heading || 'Seen in your photo (check it)') + '</div><ul>' +
+      list.map(o => '<li>' + esc(o.text) + '</li>').join('') + '</ul></div>';
+  }
+  function observationsForStep(n) {
+    const r = state.extractionResult;
+    return r && Array.isArray(r.observations) ? r.observations.filter(o => o.step === n) : [];
+  }
+
   // -- Step 2: Review --------------------------------------------------
   function renderReview() {
     const result = state.extractionResult;
@@ -639,6 +655,7 @@
       $('#questions-card').style.display = 'none';
       $('#conflicts-card').style.display = 'none';
       $('#limitations-card').style.display = 'none';
+      $('#observations-card').style.display = 'none';
       $('#btn-to-confirm').disabled = true;
       return;
     }
@@ -726,6 +743,19 @@
       });
     } else {
       $('#conflicts-card').style.display = 'none';
+    }
+
+    const obsC = $('#observations-container');
+    obsC.innerHTML = '';
+    const obsAll = Array.isArray(result.observations) ? result.observations : [];
+    if (obsAll.length > 0) {
+      $('#observations-card').style.display = 'block';
+      const steps = [...new Set(obsAll.map(o => o.step))].sort((x, y) => x - y);
+      obsC.innerHTML = steps.map(n =>
+        '<div class="obs-step"><div class="obs-step-label">Step ' + esc(n) + '</div>' + observationsHtml(observationsForStep(n), 'Seen in your photo (check it)') + '</div>'
+      ).join('');
+    } else {
+      $('#observations-card').style.display = 'none';
     }
 
     if (result.visual_limitations && result.visual_limitations.length > 0) {
@@ -1067,7 +1097,7 @@
     }
 
     const steps = currentRecord._data.steps;
-    const refs = buildReassemblyRefs(currentRecord, state.extractionResult, stepMappings, state.editedNotes);
+    const refs = buildReassemblyRefs(currentRecord, state.extractionResult, stepMappings, getCurrentNotes());
 
     content.innerHTML =
       '<div class="notice safety">' +
@@ -1093,6 +1123,7 @@
             '<div>' +
               '<div class="order">Put back ' + esc(ref.refNumber) + ' of ' + esc(refs.length) + '</div>' +
               '<div class="note">' + esc(ref.originalNote) + '</div>' +
+              observationsHtml(ref.observations, 'Seen in your photo (check it)') +
               ref.lines.map(l =>
                 '<div class="ref-line ref-confirmed">' + esc(l.text) + '</div>' +
                 l.corrections.map(c =>

@@ -343,3 +343,11 @@ h2 + .block, h2 + div > .block:first-child { border-top: none; }
 .step-edit-bar, #own-record-bar { margin: 12px 0; }
 .image-upload-area.static { cursor: default; }
 .image-upload-area.static:hover { border-color: var(--rule); }
+
+/* Photo observations: Meta's suggestions, visibly different from the person's own notes */
+.seen-box { margin: 8px 0 4px; padding: 8px 12px; border: 1px dashed var(--muted); background: #fff; max-width: 62ch; }
+.seen-title { font-weight: 700; font-size: 0.8125rem; color: var(--muted); margin-bottom: 4px; }
+.seen-box ul { margin: 0; padding-left: 1.1em; }
+.seen-box li { font-style: italic; font-size: 0.9375rem; margin: 2px 0; }
+.obs-step { margin: 10px 0; }
+.obs-step-label { font-weight: 700; }

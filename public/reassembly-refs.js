@@ -43,7 +43,9 @@
       const original = step.action && step.action.value != null
         ? step.action.value
         : ((originalNotes.find((n) => 'step' + n.panel === norm((step.evidence || [])[0] || '')) || {}).note || '');
-      return { step, refNumber: i + 1, originalNote: original, lines };
+      const obsList = (extraction && Array.isArray(extraction.observations) ? extraction.observations : [])
+        .filter((o) => o && Number(o.step) === stepNumber && typeof o.text === 'string');
+      return { step, refNumber: i + 1, originalNote: original, lines, observations: obsList };
     });
   }
 

@@ -70,6 +70,48 @@ function bagLettersFromNotes(notes) {
   return [...found].sort();
 }
 
+const OBS_MAX_PER_STEP = 3;
+const OBS_MAX_CHARS = 140;
+const COUNT_WORDS = new Set(['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'dozen', 'dozens', 'pair', 'pairs', 'couple', 'single', 'double', 'triple']);
+const FASTENER_RE = /^(?:screws?|bolts?|nuts?|washers?|fasteners?)$/;
+
+/**
+ * True when an observation states a count of fasteners: a digit or number word within four words of
+ * screw, bolt, nut, washer or fastener. Numbers that name a step or photo ("step 3") do not count.
+ */
+function observationHasFastenerCount(text) {
+  const tokens = String(text).toLowerCase().match(/[a-z0-9]+/g) || [];
+  const fastener = [];
+  const numeric = [];
+  tokens.forEach((t, i) => {
+    if (FASTENER_RE.test(t)) fastener.push(i);
+    const prev = i > 0 ? tokens[i - 1] : '';
+    const isRef = /^(?:step|steps|panel|photo|image|picture|page|figure)$/.test(prev);
+    if ((/\d/.test(t) || COUNT_WORDS.has(t)) && !isRef) numeric.push(i);
+  });
+  return fastener.some(f => numeric.some(n => Math.abs(f - n) <= 4));
+}
+
+/**
+ * Per-step photo observations from the model. Suggestions only, never facts. Entries are stripped (not
+ * trusted) when they are not {step, text}, point outside the record, exceed 140 characters, are empty,
+ * contain a fastener count, or exceed 3 per step. Returns { observations, dropped }.
+ */
+function sanitizeObservations(raw, stepCount) {
+  const out = [];
+  const perStep = {};
+  let dropped = 0;
+  const list = Array.isArray(raw) ? raw : [];
+  for (const o of list) {
+    const ok = o && typeof o === 'object' && Number.isSafeInteger(o.step) && o.step >= 1 && o.step <= stepCount && typeof o.text === 'string';
+    const text = ok ? o.text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    if (!ok || !text || text.length > OBS_MAX_CHARS || observationHasFastenerCount(text) || (perStep[o.step] || 0) >= OBS_MAX_PER_STEP) { dropped++; continue; }
+    perStep[o.step] = (perStep[o.step] || 0) + 1;
+    out.push({ step: o.step, text });
+  }
+  return { observations: out.sort((a, b) => a.step - b.step), dropped };
+}
+
 /** "step3" or legacy "panel3" -> 3, else null. */
 function evidenceStepNumber(e) {
   const m = /^(?:step|panel)(\d+)$/i.exec(String(e).trim());
@@ -186,7 +228,9 @@ function validateMetaImport(raw, opts) {
       ? raw.visual_limitations.filter(l => typeof l === 'string').map(l => String(l))
       : [];
 
-    return { valid: true, bags, questions, conflicts: derivedConflicts, visual_limitations, stepCount: Number.isSafeInteger(o.stepCount) ? stepCount : null };
+    const obs = sanitizeObservations(raw.observations, stepCount);
+
+    return { valid: true, bags, questions, conflicts: derivedConflicts, visual_limitations, observations: obs.observations, observations_dropped: obs.dropped, stepCount: Number.isSafeInteger(o.stepCount) ? stepCount : null };
   } catch (e) {
     return { valid: false, error: e.message };
   }
