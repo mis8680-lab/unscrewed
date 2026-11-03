@@ -93,7 +93,7 @@ describe('G1: zero bags and bag letter spellings', () => {
       assert.equal(r.status, 400);
       const j = await r.json();
       assert.equal(j.error.code, 'bags_unlabeled');
-      assert.match(j.error.message, /Label the bags A to H/);
+      assert.match(j.error.message, /letters A to H/);
     });
     assert.deepEqual(calls, []);
     assert.match(appSrc, /notesMentionFasteners\(notes\)\) \{ setLiveStatus\(UNLABELED_BAGS_MESSAGE, true\)/);

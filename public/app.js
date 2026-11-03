@@ -627,6 +627,8 @@
         logAction('live_rejected', validated.error);
         return;
       }
+      try { crossCheckAndDerive(validated, notes); }
+      catch { setLiveStatus('Unscrewed rejected Meta\'s answer: a quantity or step it cites is not in your notes. Try the live call again.', true); logAction('live_rejected', 'unsupported_quantity'); return; }
       state.extractionResult = validated;
       state.extractionMeta = { mode: 'live', model: String(j.model), latencyMs: Number(j.latencyMs) || 0, usage: j.usage && typeof j.usage === 'object' ? j.usage : null };
       state.extractionInputHash = hashNotes(notes);

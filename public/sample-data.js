@@ -62,13 +62,52 @@ const MAX_STEPS = 12;
  * Bag letters in one piece of text. "bag A", "BAG A", "bagA", "bag-A", "bag #A", "bags A/B/C", "bags A, B and C".
  * The word is matched without regard to case; the letter must be an upper-case A to H on its own.
  */
-const BAG_RE_SOURCE = '(?<![A-Za-z])[Bb][Aa][Gg][Ss]?[\\s\\-#:.]*([A-H](?:\\s*(?:[\\/,&]|and)\\s*[A-H])*)(?![A-Za-z])';
-function bagLettersInText(text) {
+const BAG_HEAD_RE = /(?<![A-Za-z])bags?[\s\-#:]*([A-Ha-h])(?![A-Za-z0-9])/gi;
+const BAG_CONT_RE = /\s*(?:(?:[\/,&]|and\b|or\b)|(-|\u2013|to\b))\s*([A-Ha-h])(?![A-Za-z0-9])/y;
+// A lowercase "a" right after "bag" is a letter only when what follows cannot make it an article.
+const LOWER_A_OK = /^(?:\s*(?:[,;:.!?)\/&\-\u2013=]|$)|\s+(?:and|or|to|is|are|was|has|have|had|holds?|contains?|with|each|total|screws?|bolts?|fasteners?|washers?|nuts?|dowels?|\d))/i;
+function letterOk(ch, rest) { return ch !== 'a' || LOWER_A_OK.test(rest); }
+/** Sentences of a text: split after . ! ? ; and on newlines. */
+function sentencesOf(text) { return String(text).normalize('NFKC').split(/(?<=[.;!?])\s+|\s*\n\s*/).filter(x => x.trim()); }
+function bagLettersInSentence(sentence) {
   const found = new Set();
-  for (const m of String(text).normalize('NFKC').matchAll(new RegExp(BAG_RE_SOURCE, 'g'))) {
-    for (const l of m[1].match(/[A-H]/g)) found.add(l);
+  const re = new RegExp(BAG_HEAD_RE.source, 'gi');
+  let m;
+  while ((m = re.exec(sentence)) !== null) {
+    if (!letterOk(m[1], sentence.slice(m.index + m[0].length))) { re.lastIndex = m.index + 4; continue; }
+    let last = m[1].toUpperCase();
+    found.add(last);
+    let pos = m.index + m[0].length;
+    for (;;) {
+      const c = new RegExp(BAG_CONT_RE.source, 'y'); c.lastIndex = pos;
+      const cm = c.exec(sentence);
+      if (!cm || !letterOk(cm[2], sentence.slice(c.lastIndex === pos ? pos : pos + cm[0].length))) break;
+      const next = cm[2].toUpperCase();
+      if (cm[1]) { for (let k = last.charCodeAt(0); k <= next.charCodeAt(0); k++) found.add(String.fromCharCode(k)); }
+      else found.add(next);
+      last = next; pos += cm[0].length; re.lastIndex = pos;
+    }
   }
   return [...found];
+}
+function bagLettersInText(text) {
+  const found = new Set();
+  for (const sen of sentencesOf(text)) for (const l of bagLettersInSentence(sen)) found.add(l);
+  return [...found];
+}
+/** Clauses of a text: sentences, split again on commas and " and " when each side names its own bag. */
+function clausesOf(text) {
+  const out = [];
+  for (const sen of sentencesOf(text)) {
+    const parts = sen.split(/\s*,\s*|\s+and\s+/i);
+    let cur = '';
+    for (const p of parts) {
+      if (cur && bagLettersInSentence(p).length && bagLettersInSentence(cur).length) { out.push(cur); cur = p; }
+      else cur = cur ? cur + ' ' + p : p;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
 }
 
 /** Bag letters (A to H) a set of notes mentions. Sorted, unique. */
@@ -84,7 +123,7 @@ function bagLettersFromNotes(notes) {
 function notesMentionFasteners(notes) {
   return (Array.isArray(notes) ? notes : []).some(n => /\b(?:screws?|bolts?|fasteners?)\b/i.test(String(n && n.note != null ? n.note : '').normalize('NFKC')));
 }
-const UNLABELED_BAGS_MESSAGE = 'Your notes mention screws but no bag letter. Label the bags A to H (for example "bag A") and try again.';
+const UNLABELED_BAGS_MESSAGE = 'Your notes mention screws but no bag letter. Label the bags using the letters A to H (for example "bag A") and try again.';
 
 // ---- Quantities stated in notes ------------------------------------------------------
 const NW_ONES = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
@@ -93,8 +132,14 @@ const NW_UNITS = Object.keys(NW_ONES).filter(w => NW_ONES[w] >= 1 && NW_ONES[w] 
 const NUMW_SOURCE = '(?:(?:' + Object.keys(NW_TENS).join('|') + ')(?:[\\s-]+(?:' + NW_UNITS.join('|') + '))?|' + Object.keys(NW_ONES).sort((x, y) => y.length - x.length).join('|') + ')';
 // A number that stands alone: not part of M4, #8, 3.5, 4mm or a longer token.
 const NUM_SOURCE = '(?<![A-Za-z0-9#.])(\\d+|' + NUMW_SOURCE + ')(?![A-Za-z0-9])';
+const NUM_SOURCE_GLUED = '(?<![A-Za-z0-9#.])(\\d+|' + NUMW_SOURCE + ')(?![0-9])(?=\\s|screws?|bolts?|nuts?|washers?|dowels?|fasteners?)';
 const FASTENER_WORD = '(?:screws?|bolts?|fasteners?|washers?|nuts?|dowels?)\\b';
 const UNIT_WORD = /^(?:mm|cm|m|in|inch|inches|millimeters?|centimeters?|x|by|long|length|wide|thick)$/i;
+
+// A number after step/shelf/panel/part/no./# or after "x" (M4 x 20), or before mm/cm/in, is not a count.
+const NONCOUNT_BEFORE = /(?:\b(?:steps?|shelf|shelves|panels?|parts?|no|nos|number|item|page|figure|fig|photo|image)\.?\s*#?\s*|#\s*|[x\u00d7]\s*)$/i;
+const NONCOUNT_AFTER = /^\s*-?\s*(?:mm|cm|in(?!\s+(?:bags?|total)\b)|inch|inches|millimeters?|centimeters?)\b/i;
+function isNonCount(t, start, len) { return NONCOUNT_BEFORE.test(t.slice(0, start)) || NONCOUNT_AFTER.test(t.slice(start + len)); }
 
 /** "twenty-four" / "twenty four" / "24" -> 24, else NaN. Number words run to ninety-nine. */
 function numberFromToken(t) {
@@ -115,30 +160,33 @@ function numberFromToken(t) {
 function quantitiesInNote(text) {
   const t = String(text).normalize('NFKC');
   const out = new Set();
-  const add = (tok) => { const n = numberFromToken(tok); if (Number.isSafeInteger(n)) out.add(n); };
-  const re = new RegExp(NUM_SOURCE + '\\s+((?:[A-Za-z0-9#.]+\\s+){0,2}?)' + FASTENER_WORD, 'gi');
+  const add = (tok, start) => { const n = numberFromToken(tok); if (Number.isSafeInteger(n) && !isNonCount(t, start, String(tok).length)) out.add(n); };
+  const re = new RegExp(NUM_SOURCE_GLUED + '\\s*((?:[A-Za-z0-9#.]+\\s+){0,2}?)' + FASTENER_WORD, 'gi');
   let m;
   while ((m = re.exec(t)) !== null) {
     const between = m[2].trim().split(/\s+/).filter(Boolean);
     // A skipped candidate must not swallow the numbers after it ("shelf 4 and 6 screws").
     if (between.some(w => UNIT_WORD.test(w) || /^(?:and|or|then|to)$/i.test(w) || Number.isFinite(numberFromToken(w)) || /^\d/.test(w))) { re.lastIndex = m.index + 1; continue; }
-    add(m[1]);
+    add(m[1], m.index + m[0].indexOf(m[1]));
   }
-  for (const m of t.matchAll(new RegExp('\\b(?:holds?|has|have|contains?)\\s+' + NUM_SOURCE + '(?=\\s*(?:[.,;!?]|$)|\\s+(?:each|total|in total|pieces?|items?)\\b)', 'gi'))) add(m[1]);
-  for (const m of t.matchAll(new RegExp(NUM_SOURCE + '\\s+(?:of them\\s+)?(?:in|into|for)\\s+bags?\\b', 'gi'))) add(m[1]);
-  for (const m of t.matchAll(new RegExp('\\bbags?[\\s\\-#]*[A-H]\\s*[:=]\\s*' + NUM_SOURCE, 'gi'))) add(m[1]);
+  for (const m of t.matchAll(new RegExp('\\b(?:holds?|has|have|contains?)\\s+' + NUM_SOURCE + '(?=\\s*(?:[.,;!?]|$)|\\s+(?:each|total|in total|pieces?|items?)\\b)', 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
+  for (const m of t.matchAll(new RegExp(NUM_SOURCE + '\\s+(?:of them\\s+)?(?:in|into|for)\\s+bags?\\b', 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
+  for (const m of t.matchAll(new RegExp('\\bbags?[\\s\\-#]*[A-H]\\s*[:=]\\s*' + NUM_SOURCE, 'gi'))) add(m[1], m.index + m[0].indexOf(m[1]));
   return out;
 }
 
 /** True when the note states n as a fastener or bag quantity. */
-function noteSupportsQuantity(text, n) { return quantitiesInNote(text).has(n); }
+function noteSupportsQuantity(text, n, bagId) {
+  if (!bagId) return quantitiesInNote(text).has(n);
+  return clausesOf(text).some(c => bagLettersInSentence(c).includes(bagId) && quantitiesInNote(c).has(n));
+}
 
 /** Integers each note states for each bag, e.g. { A: Map(4 -> [5], 6 -> [2]) }. */
 function deriveNoteQuantities(notes) {
   const out = {};
   for (const { panel, note } of notes) {
-    for (const sentence of String(note).normalize('NFKC').split(/(?<=[.;!?\n])\s+/)) {
-      const bags = bagLettersInText(sentence);
+    for (const sentence of clausesOf(note)) {
+      const bags = bagLettersInSentence(sentence);
       if (!bags.length) continue;
       for (const b of bags) for (const n of quantitiesInNote(sentence)) {
         if (!Number.isSafeInteger(n) || n < 1) continue;
@@ -163,7 +211,7 @@ function crossCheckAndDerive(v, notes) {
     for (const r of bag.reports) {
       for (const ev of r.evidence) {
         const n = evidenceStepNumber(ev);
-        if (n === null || !byStep.has(n) || !noteSupportsQuantity(byStep.get(n), r.value)) throw unsupported();
+        if (n === null || !byStep.has(n) || !noteSupportsQuantity(byStep.get(n), r.value, bag.id)) throw unsupported();
       }
       r.evidence = r.evidence.map(e => 'step' + evidenceStepNumber(e));
     }
@@ -193,7 +241,7 @@ function crossCheckAndDerive(v, notes) {
 const OBS_MAX_PER_STEP = 3;
 const OBS_MAX_CHARS = 140;
 const COUNT_WORDS = new Set(['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'dozen', 'dozens', 'pair', 'pairs', 'couple', 'single', 'double', 'triple',
-  'few', 'several', 'many', 'handful', 'handfuls', 'lots', 'lot', 'numerous', 'some', 'plenty', 'multiple', 'bunch', 'bunches', 'loads', 'both']);
+  'few', 'several', 'many', 'handful', 'handfuls', 'lots', 'lot', 'numerous', 'some', 'plenty', 'multiple', 'bunch', 'bunches', 'loads', 'both', 'no', 'none', 'zero']);
 const ROMAN_RE = /^(?:i{1,3}|iv|vi{0,3}|ix|xi{0,3}|xiv|xv|xvi{0,3}|xx)$/;
 const FASTENER_RE = /^(?:screws?|bolts?|nuts?|washers?|fasteners?|dowels?)$/;
 
@@ -204,7 +252,7 @@ const FASTENER_RE = /^(?:screws?|bolts?|nuts?|washers?|fasteners?|dowels?)$/;
  * step or photo ("step 3") do not count. Over-blocking is intended.
  */
 function observationHasFastenerCount(text) {
-  const tokens = String(text).normalize('NFKC').toLowerCase().match(/[a-z0-9]+/g) || [];
+  const tokens = String(text).normalize('NFKC').toLowerCase().match(/\d+|[a-z]+\d*/g) || [];
   const fastener = [];
   const numeric = [];
   tokens.forEach((t, i) => {
@@ -215,7 +263,7 @@ function observationHasFastenerCount(text) {
     if (t === 'many' && prev === 'how') return;
     if (/\d/.test(t) || COUNT_WORDS.has(t) || ROMAN_RE.test(t)) numeric.push(i);
   });
-  return fastener.some(f => numeric.some(n => Math.abs(f - n) <= 4));
+  return fastener.some(f => numeric.some(n => Math.abs(f - n) <= 6));
 }
 
 /**
