@@ -20,6 +20,7 @@
   const STORAGE_KEY = 'unscrewed_mvp_state';
   const MIN_STEPS_UI = 2;
   const MAX_STEPS_UI = 12;
+  const MAX_CONFIRM_QTY = 999;
   const IMG_DATA_RE = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+\/=]+)$/;
 
   // -- State -----------------------------------------------------------
@@ -71,10 +72,7 @@
           }
         }
         if (parsed.extractionResult) {
-          if (!parsed.extractionResult.valid || !Array.isArray(parsed.extractionResult.bags) ||
-              (parsed.mode === 'custom' && !parsed.extractionResult.bags.every(b => b && typeof b.id === 'string' && /^[A-H]$/.test(b.id)))) {
-            parsed.extractionResult = null;
-          }
+          if (!isRestorableResult(parsed.extractionResult)) parsed.extractionResult = null;
         }
         if (parsed.extractionResult) {
           const sc = Number.isSafeInteger(parsed.extractionResult.stepCount) ? parsed.extractionResult.stepCount : 12;
@@ -103,14 +101,22 @@
       extractionMeta: state.extractionMeta,
       actionLog: state.actionLog,
     };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
-    } catch {
-      // Photos can exceed the browser storage quota. Keep notes and results, drop the photos.
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...persist, customSteps: persist.customSteps ? persist.customSteps.map(x => ({ note: x.note, image: null })) : null, extractionResult: null, extractionMeta: null, extractionInputHash: null }));
-      } catch { /* storage unavailable */ }
-    }
+    let outcome;
+    try { outcome = persistState(localStorage, STORAGE_KEY, persist); }
+    catch { outcome = { saved: 'none', photosDropped: false, message: null }; }
+    if (outcome.message && !storageWarned) { storageWarned = true; showStorageNote(outcome.message); }
+    if (!outcome.message) { storageWarned = false; hideStorageNote(); }
+  }
+  let storageWarned = false;
+  // Non-blocking: a quiet line under the step tabs, plus the toast. Nothing waits on it.
+  function showStorageNote(msg) {
+    const el = document.getElementById('storage-note');
+    if (el) { el.textContent = msg; el.hidden = false; }
+    toast(msg);
+  }
+  function hideStorageNote() {
+    const el = document.getElementById('storage-note');
+    if (el) el.hidden = true;
   }
 
   let currentRecord = null;
@@ -249,7 +255,7 @@
           <div class="voice-row">
             <button type="button" class="btn btn-outline btn-sm mic-btn" data-mic="${esc(n.panel)}" aria-pressed="false"${voiceAvailable ? '' : ' disabled'}>Record note</button>
             ${custom ? '<button type="button" class="btn btn-quiet btn-sm" data-remove-step="' + esc(n.panel) + '"' + (notes.length <= MIN_STEPS_UI ? ' disabled' : '') + '>Remove step ' + esc(n.panel) + '</button>' : ''}
-            <span class="voice-status" id="voice-status-${esc(n.panel)}" role="status" aria-live="polite">${voiceAvailable ? '' : esc(VOICE_OFF_TEXT)}</span>
+            <span class="voice-status" id="voice-status-${esc(n.panel)}" role="status" aria-live="polite">${voiceChecked && !voiceAvailable ? esc(VOICE_OFF_TEXT) : ''}</span>
           </div>
           <p class="hint voice-hint" id="voice-hint-${esc(n.panel)}"${voiceUnedited.has(n.panel) ? '' : ' hidden'}>Transcribed by Meta. Check it.</p>
         </div>
@@ -342,6 +348,15 @@
     toast('Your own record: add a photo and a line for each step.');
   });
 
+  // The Add step button sits below the step list, so it moves down the page as steps are added.
+  // After any change to the list, bring the step being worked on into view and focus its note.
+  function focusStepNote(n) {
+    const ta = document.getElementById('note-' + n);
+    if (!ta) return;
+    ta.focus({ preventScroll: true });
+    ta.scrollIntoView({ block: 'center' });
+  }
+
   $('#btn-add-step').addEventListener('click', () => {
     if (!isCustom() || !requireIdleMic()) return;
     if (state.customSteps.length >= MAX_STEPS_UI) { toast('A record holds up to ' + MAX_STEPS_UI + ' steps.'); return; }
@@ -351,7 +366,9 @@
     invalidateExtraction(null);
     saveState();
     renderInput();
+    focusStepNote(state.customSteps.length);
     logAction('step_added', 'now ' + state.customSteps.length);
+    toast('Step ' + state.customSteps.length + ' added.');
   });
 
   function removeStep(n) {
@@ -363,6 +380,7 @@
     invalidateExtraction('Step removed, so the earlier result was cleared. Build the bag record again.');
     saveState();
     renderInput();
+    focusStepNote(Math.min(n, state.customSteps.length));
     logAction('step_removed', 'step ' + n);
   }
 
@@ -411,6 +429,7 @@
       invalidateExtraction('You changed a photo, so the earlier result was cleared.');
       saveState();
       renderInput();
+      focusStepNote(n);
       logAction('image_uploaded', 'step ' + n);
       toast('Photo added to step ' + n + '. It stays in this browser unless you make a live Meta call.');
     } catch (err) {
@@ -421,8 +440,19 @@
   // -- Voice notes (Meta Muse Voice Transcribe) ---------------------------
   const VOICE_OFF_TEXT = 'Voice notes need a Meta API key on the server.';
   let voiceAvailable = false;
+  let voiceChecked = false; // true once /api/status has answered
   const voiceUnedited = new Set();
   let activeMic = null; // { panel, recorder }
+
+  // Mic buttons and their status lines always follow /api/status. The "needs a key" text is shown only
+  // while voice is off; when voice is on it is cleared, and other messages (errors, "Recording") are kept.
+  function syncVoiceUi() {
+    document.querySelectorAll('[data-mic]').forEach(b => { if (!activeMic) b.disabled = !voiceAvailable; });
+    document.querySelectorAll('.voice-status').forEach(el => {
+      if (voiceChecked && !voiceAvailable) { if (!el.textContent) el.textContent = VOICE_OFF_TEXT; }
+      else if (el.textContent === VOICE_OFF_TEXT) el.textContent = '';
+    });
+  }
 
   function setVoiceStatus(panel, msg) {
     const el = document.getElementById('voice-status-' + panel);
@@ -491,7 +521,7 @@
     const match = matchSeededInput(notes, isCustom());
 
     if (match.matched) {
-      const validated = validateMetaImport(match.metaOutput, { stepCount: notes.length });
+      const validated = validateMetaImport(match.metaOutput, { stepCount: notes.length, trustedSample: true });
       if (!validated.valid) {
         toast('The saved response did not pass Unscrewed\'s checks (' + validated.error + '). Reload the page and try again.');
         return;
@@ -536,11 +566,11 @@
       liveAvailable = j.live === true;
       voiceAvailable = j.voice === true;
       if (typeof j.model === 'string') liveModel = j.model;
-    } catch { liveAvailable = false; }
+    } catch { liveAvailable = false; voiceAvailable = false; }
+    voiceChecked = true;
     $('#mode-badge').textContent = liveAvailable ? 'Live Meta calls on (' + liveModel + ')' : 'Using saved Meta responses';
     liveBtn.disabled = !liveAvailable;
-    document.querySelectorAll('[data-mic]').forEach(b => { b.disabled = !voiceAvailable; });
-    document.querySelectorAll('.voice-status').forEach(el => { if (!voiceAvailable) el.textContent = VOICE_OFF_TEXT; });
+    syncVoiceUi();
     if (!liveAvailable) setLiveStatus('Live Meta calls are off because the server has no Meta API key. The saved response works without one.', false);
   }
 
@@ -567,6 +597,7 @@
     if (!liveAvailable || liveBtn.disabled) return;
     const notes = getCurrentNotes();
     const body = { notes };
+    if (!bagLettersFromNotes(notes).length && notesMentionFasteners(notes)) { setLiveStatus(UNLABELED_BAGS_MESSAGE, true); return; }
     if (isCustom()) {
       const images = [];
       for (let i = 0; i < state.customSteps.length; i++) {
@@ -773,8 +804,12 @@
     if (!raw) { toast('Paste the JSON from Meta first.'); return; }
     let parsed;
     try { parsed = JSON.parse(raw); } catch { toast('That text is not valid JSON. Copy the whole response from Meta and paste it again.'); return; }
-    const validated = validateMetaImport(parsed, importOpts(getCurrentNotes()));
+    const pasteNotes = getCurrentNotes();
+    const validated = validateMetaImport(parsed, importOpts(pasteNotes));
     if (!validated.valid) { toast('Unscrewed could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
+    // Same check the live path gets: every cited step must exist and its note must state the quantity.
+    try { crossCheckAndDerive(validated, pasteNotes); }
+    catch { toast('Unscrewed could not use that response: a quantity or step it cites is not in your notes. Fix it and try again.'); return; }
     state.extractionResult = validated;
     state.extractionMeta = null;
     state.extractionInputHash = hashNotes(getCurrentNotes());
@@ -954,8 +989,8 @@
     const msg = $('#msg-' + bagId);
     if (msg) msg.textContent = '';
 
-    if (!Number.isSafeInteger(val) || val < 1) {
-      if (msg) msg.textContent = 'Enter how many screws are in bag ' + bagId + ', as a whole number of 1 or more.';
+    if (!Number.isSafeInteger(val) || val < 1 || val > MAX_CONFIRM_QTY) {
+      if (msg) msg.textContent = 'Enter how many screws are in bag ' + bagId + ', as a whole number from 1 to ' + MAX_CONFIRM_QTY + '.';
       input.focus();
       return;
     }
@@ -1031,36 +1066,40 @@
     const btn = $('#btn-to-reassembly');
     if (!currentRecord) { btn.disabled = true; return; }
 
-    const allQtyConfirmed = bagIds().every(id => {
+    const hasBags = bagIds().length >= 1;
+    const allQtyConfirmed = hasBags && bagIds().every(id => {
       const part = currentRecord.getPart('screws_' + id);
       return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
     });
     const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
-    const allMapped = bagIds().every(id => stepMappings[id] != null && validSteps().includes(stepMappings[id]));
+    const allMapped = hasBags && bagIds().every(id => stepMappings[id] != null && validSteps().includes(stepMappings[id]));
 
-    btn.disabled = !(allQtyConfirmed && noConflicts && allMapped);
+    btn.disabled = !(hasBags && allQtyConfirmed && noConflicts && allMapped);
 
     const gateStatus = $('#gate-status');
     if (gateStatus) {
       const gates = [];
-      if (!allQtyConfirmed) gates.push('You confirm a count for every bag.');
+      if (!hasBags) gates.push('Your notes name at least one bag. Label bags A to H, for example "bag A".');
+      else if (!allQtyConfirmed) gates.push('You confirm a count for every bag.');
       if (!noConflicts) gates.push('You settle every count that disagrees.');
-      if (!allMapped) gates.push('You choose a step for every bag.');
+      if (hasBags && !allMapped) gates.push('You choose a step for every bag.');
       gateStatus.innerHTML = gates.length > 0
         ? '<div class="gate-blocked"><strong>The put-back reference stays locked until:</strong><ul>' + gates.map(g => '<li>' + esc(g) + '</li>').join('') + '</ul></div>'
-        : '<div class="gate-clear"><strong>' + (bagIds().length === 0 ? 'Your notes mention no bags, so there is nothing to count.' : bagIds().length === 1 ? 'The bag is confirmed.' : 'All ' + bagIds().length + ' bags are confirmed.') + '</strong>You can continue to the put-back reference.</div>';
+        : '<div class="gate-clear"><strong>' + (bagIds().length === 1 ? 'The bag is confirmed.' : 'All ' + bagIds().length + ' bags are confirmed.') + '</strong>You can continue to the put-back reference.</div>';
     }
   }
 
   $('#btn-back-review').addEventListener('click', () => goToStep('review'));
   $('#btn-to-reassembly').addEventListener('click', () => {
     if (!currentRecord) return;
-    const allQtyConfirmed = bagIds().every(id => {
+    const hasBags = bagIds().length >= 1;
+    const allQtyConfirmed = hasBags && bagIds().every(id => {
       const part = currentRecord.getPart('screws_' + id);
       return part && part.quantity.source === 'user_confirmed' && Number.isSafeInteger(part.quantity.value) && part.quantity.value >= 1;
     });
     const noConflicts = currentRecord.getUnresolvedConflicts().length === 0;
-    const allMapped = bagIds().every(id => stepMappings[id] != null);
+    const allMapped = hasBags && bagIds().every(id => stepMappings[id] != null);
+    if (!hasBags) { toast('The record needs at least one bag. Label bags A to H in your notes.'); return; }
     if (!allQtyConfirmed || !noConflicts || !allMapped) {
       toast('Confirm every bag, settle any disagreeing counts, and choose a step for each bag first.');
       return;
@@ -1078,15 +1117,17 @@
     }
 
     const summary = currentRecord.toReassemblySummary();
-    const allConfirmed = summary.parts.every(p => p.quantityIsConfirmed);
+    const hasBags = summary.parts.length >= 1 && bagIds().length >= 1;
+    const allConfirmed = hasBags && summary.parts.every(p => p.quantityIsConfirmed);
     const hasConflicts = summary.parts.some(p => p.hasUnresolvedConflict);
-    const allMapped = bagIds().every(id => stepMappings[id] != null);
+    const allMapped = hasBags && bagIds().every(id => stepMappings[id] != null);
 
-    if (!allConfirmed || hasConflicts || !allMapped) {
+    if (!hasBags || !allConfirmed || hasConflicts || !allMapped) {
       const reasons = [];
-      if (!allConfirmed) reasons.push('Not every bag count is confirmed.');
+      if (!hasBags) reasons.push('The record has no bags yet.');
+      else if (!allConfirmed) reasons.push('Not every bag count is confirmed.');
       if (hasConflicts) reasons.push('Some counts still disagree.');
-      if (!allMapped) reasons.push('Not every bag has a step.');
+      if (hasBags && !allMapped) reasons.push('Not every bag has a step.');
       content.innerHTML =
         '<div class="reassembly-blocked">' +
           '<div class="blocked-title">The put-back reference is locked</div>' +
