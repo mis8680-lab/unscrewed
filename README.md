@@ -1,8 +1,13 @@
-# PackBack - Disassembly Record Assistant
+# Unscrewed - Take it apart. You're not screwed.
+
+Unscrewed is a disassembly record assistant. Take furniture or a gadget apart, photograph each step, write a line about it, and let Meta draft what went into each labeled bag. You confirm every count, then get your own steps back in reverse.
+
+**What is different from manual logging apps:** most disassembly loggers only store what you type. Unscrewed uses Meta models to do real work: it transcribes spoken notes (Muse Voice Transcribe), reads every step photo (Muse Wonder) to note which part came off and what is attached to what, and cross-checks your notes for bags that disagree. Meta only suggests. Nothing counts until you confirm it, and screws are never counted from photos.
 
 ## Problem
 
-When you disassemble furniture for a move, you put screws in labeled bags and snap photos. Weeks later you reassemble, staring at unlabeled wood and mystery bags. Which bag goes where? Did you count right? PackBack extracts structured data from your disassembly notes and photo using a Meta model, then walks you through an explicit confirmation flow before producing a reassembly reference.
+
+When you disassemble furniture for a move, you put screws in labeled bags and snap photos. Weeks later you reassemble, staring at unlabeled wood and mystery bags. Which bag goes where? Did you count right? Unscrewed extracts structured data from your disassembly notes and photo using a Meta model, then walks you through an explicit confirmation flow before producing a reassembly reference.
 
 ## Built during the hackathon (Oct 27 - Nov 4, 2026)
 
@@ -12,7 +17,7 @@ Everything in this repository was created during the hackathon build period (Oct
 - **5-step UI flow**: Input (scenario, notes, photo), Review (model output with evidence), Confirm (explicit per-bag quantity confirmation, step mapping, conflict resolution), Reassembly (reverse-order reference, gated behind full confirmation), History (complete audit trail).
 - **Validation pipeline** (`public/sample-data.js`, `lib/validate-output.mjs`): structural validation of Meta JSON. Exactly bags A/B/C are required, quantities must be positive integers, evidence must be non-blank, and conflicts are derived from reports (imported conflict status is ignored).
 - **Three test scenarios**: Normal (all data present), Missing (bag B has no quantity or step), Conflict (bag A reported as 6 and as 4). Each is backed by a saved Meta Playground response in `fixtures/meta/`.
-- **Live Meta pipeline** (`lib/live-meta.mjs`): server-side calls to the Meta Model API with request checks (same-origin plus `X-PackBack` header, rate limit, image magic-byte check, body deadline), notes passed as fenced untrusted data, and a deterministic cross-check that every reported quantity actually appears in the cited note.
+- **Live Meta pipeline** (`lib/live-meta.mjs`): server-side calls to the Meta Model API with request checks (same-origin plus `X-Unscrewed` header, rate limit, image magic-byte check, body deadline), notes passed as fenced untrusted data, and a deterministic cross-check that every reported quantity actually appears in the cited note.
 - **Test suite**: 128 tests covering safeguard invariants, validation rules, the live pipeline (with a mocked Meta API), fixture integrity, and UI contract checks.
 
 ## Meta model usage

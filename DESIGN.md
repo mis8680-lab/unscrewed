@@ -1,4 +1,6 @@
-# PackBack design plan
+# Unscrewed design plan
+
+Tagline: Take it apart. You're not screwed.
 
 Mode: product UI (operate). A person is kneeling next to a taken-apart shelf or gadget, phone in one hand, and needs to record steps, check bag counts, and trust the result. Scanability and unmistakable state beat expression. The brand lives in a few precise details.
 
@@ -36,11 +38,11 @@ Signature move: the bag. Each of A, B, C is drawn as a zip bag (zipper line alon
 
 ```
 +--------------------------------------------------------------+
-| [PackBack tape]                  Using saved Meta responses  |
+| [Unscrewed tape]                  Using saved Meta responses  |
 | 1 Add steps | 2 Check | 3 Confirm | 4 Put back | 5 Activity   |
 +--------------------------------------------------------------+
 | Take it apart, write one line per step, bag the screws.      |
-| PackBack asks Meta to draft what is in each bag. You confirm |
+| Unscrewed asks Meta to draft what is in each bag. You confirm |
 | the counts, then get the steps in reverse.                   |
 |                                                              |
 | Try a sample:  (Normal) ( Missing bag ) ( Conflicting counts)|

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PackBack MVP - Plain Node HTTP server.
+ * Unscrewed MVP - Plain Node HTTP server.
  * Zero dependencies. Serves static files from ./public plus the synthetic fixture image.
  * Bind: 127.0.0.1:4173 (configurable via PORT env).
  */
@@ -60,6 +60,6 @@ export function createApp(opts) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   createServer(createApp()).listen(PORT, HOST, () => {
-    console.log(`PackBack MVP -> http://${HOST}:${PORT} (${process.env.META_API_KEY ? 'live' : 'sample only'})`);
+    console.log(`Unscrewed MVP -> http://${HOST}:${PORT} (${process.env.META_API_KEY ? 'live' : 'sample only'})`);
   });
 }

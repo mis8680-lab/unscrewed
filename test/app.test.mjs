@@ -1,5 +1,5 @@
 /**
- * PackBack MVP -- Unit + Regression Tests
+ * Unscrewed MVP -- Unit + Regression Tests
  * Uses node:test + node:assert, zero external dependencies.
  *
  * Covers:
@@ -31,7 +31,7 @@ const VALIDATOR = join(ROOT, 'lib', 'validate-output.mjs');
 const META_DIR = join(ROOT, 'fixtures', 'meta');
 
 // -- Load modules -----------------------------------------------------
-const { PackBackRecord, SOURCE_RANK } = await import(SIBLING);
+const { UnscrewedRecord, SOURCE_RANK } = await import(SIBLING);
 const { validateProposal } = await import(VALIDATOR);
 
 const metaNormal = JSON.parse(readFileSync(join(META_DIR, 'normal.json'), 'utf8'));
@@ -52,7 +52,7 @@ const { validateMetaImport, matchSeededInput, REQUIRED_BAG_IDS, SAMPLE_INPUTS, S
 // =====================================================================
 describe('Record safeguards', () => {
   function buildRecord() {
-    const rec = new PackBackRecord('test');
+    const rec = new UnscrewedRecord('test');
     rec.addStep({ action: 'Fully assembled.', source: 'user_reported', evidence: ['panel1'] });
     rec.addStep({ action: 'Removed back panel.', source: 'user_reported', evidence: ['panel2'] });
     rec.addPart({ partId: 'screws_A', name: 'Bag A screws', quantity: 4, storage: 'Bag A', linkedStep: 1, source: 'user_reported', evidence: ['panel2'] });
@@ -110,7 +110,7 @@ describe('Record safeguards', () => {
   });
 
   it('missing fields detected', () => {
-    const rec = new PackBackRecord('missing-test');
+    const rec = new UnscrewedRecord('missing-test');
     rec.addPart({ partId: 'p1', name: 'x', quantity: null, storage: null, linkedStep: null, source: 'inferred', evidence: [] });
     const missing = rec.getMissingFields();
     assert.ok(missing.some(m => m.partId === 'p1' && m.field === 'quantity'));
@@ -128,7 +128,7 @@ describe('Record safeguards', () => {
     const rec = buildRecord();
     rec.confirmPartField('screws_A', 'quantity', 4, ['ui']);
     const json = rec.toJSON();
-    const rec2 = PackBackRecord.fromJSON(json);
+    const rec2 = UnscrewedRecord.fromJSON(json);
     assert.equal(rec2.getPart('screws_A').quantity.value, 4);
     assert.equal(rec2.getPart('screws_A').quantity.source, 'user_confirmed');
   });
@@ -520,7 +520,7 @@ describe('buildReassemblyRefs', () => {
   const NOTE = 'Removed back panel. Put 6 screws in bag A.';
 
   function build(confirmA) {
-    const rec = new PackBackRecord('t');
+    const rec = new UnscrewedRecord('t');
     rec.addStep({ action: 'Fully assembled.', source: 'user_reported', evidence: ['panel1'] });
     rec.addStep({ action: NOTE, source: 'user_reported', evidence: ['panel2'] });
     rec.addStep({ action: 'Bag B step.', source: 'user_reported', evidence: ['panel3'] });
@@ -546,7 +546,7 @@ describe('buildReassemblyRefs', () => {
     const refs = build(4);
     const step3 = refs.find(r => r.step.stepIndex === 2);
     assert.equal(step3.lines.length, 0); // B not user confirmed
-    const rec = new PackBackRecord('t');
+    const rec = new UnscrewedRecord('t');
     rec.addStep({ action: 'x', source: 'user_reported', evidence: ['panel2'] });
     rec.addPart({ partId: 'screws_A', name: 'A', quantity: 4, storage: 'Bag A', linkedStep: 1, source: 'user_reported', evidence: ['panel2'] });
     rec.confirmPartField('screws_A', 'quantity', 4, ['ui']);

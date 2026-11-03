@@ -1,4 +1,4 @@
-/* PackBack: workbench UI. Tokens are documented in DESIGN.md. */
+/* Unscrewed: workbench UI. Tokens are documented in DESIGN.md. */
 @font-face {
   font-family: 'Atkinson Hyperlegible Next';
   src: url('fonts/atkinson-next.woff2') format('woff2');
@@ -67,6 +67,7 @@ p { max-width: 62ch; }
   gap: 6px 16px;
 }
 .wordmark { font-size: 1rem; line-height: 1; }
+.tagline { margin: 0; font-size: 0.8125rem; color: #E7EBEA; flex: 1 1 auto; }
 .wordmark span {
   display: inline-block;
   background: var(--tape); color: var(--ink);

@@ -4,14 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="color-scheme" content="light">
-  <title>PackBack: a record of what is in each bag</title>
+  <title>Unscrewed: take it apart, you are not screwed</title>
   <link rel="preload" href="fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="app-header">
-    <h1 class="wordmark"><span>PackBack</span></h1>
+    <h1 class="wordmark"><span>Unscrewed</span></h1>
+    <p class="tagline">Take it apart. You're not screwed.</p>
     <p class="mode" id="mode-badge">Using saved Meta responses</p>
   </header>
 
@@ -27,7 +28,7 @@
     <!-- STEP 1: Input -->
     <section class="section active" id="section-input" aria-labelledby="h-input">
       <h2 id="h-input">Record each step of taking it apart</h2>
-      <p class="intro">PackBack reads your step photos and one-line notes and asks Meta to draft what is in each labeled bag. Meta only suggests: you confirm every count, then get your steps in reverse order for putting it back.</p>
+      <p class="intro">Unscrewed reads your step photos and one-line notes and asks Meta to draft what is in each labeled bag. Meta only suggests: you confirm every count, then get your steps in reverse order for putting it back.</p>
 
       <div class="block" role="group" aria-labelledby="h-sample">
         <h3 id="h-sample">Try a sample</h3>
@@ -103,7 +104,7 @@
         <summary>Paste a Meta response instead</summary>
         <div class="json-import-area">
           <label for="json-import-input">Meta response (JSON)</label>
-          <p class="hint" id="json-hint">Use this for your own photo, or to check a response you got from Meta yourself. PackBack checks it before using it.</p>
+          <p class="hint" id="json-hint">Use this for your own photo, or to check a response you got from Meta yourself. Unscrewed checks it before using it.</p>
           <textarea id="json-import-input" rows="6" aria-describedby="json-hint" placeholder="Paste the JSON that Meta returned"></textarea>
           <button type="button" class="btn btn-outline btn-sm" id="btn-json-import">Check and use this response</button>
         </div>
@@ -140,7 +141,7 @@
     <!-- STEP 5: History -->
     <section class="section" id="section-history" aria-labelledby="h-history">
       <h2 id="h-history">Activity</h2>
-      <p class="hint">What you and PackBack did in this browser, newest first.</p>
+      <p class="hint">What you and Unscrewed did in this browser, newest first.</p>
       <div id="history-container"></div>
       <div class="actions row">
         <button type="button" class="btn btn-outline" id="btn-back-from-history">Back to where you were</button>

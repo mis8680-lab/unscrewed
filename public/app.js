@@ -1,5 +1,5 @@
 /**
- * PackBack MVP -- App Controller v2
+ * Unscrewed MVP -- App Controller v2
  *
  * Flow: Input -> Review -> Confirm (qty + step mapping) -> Reassembly (+ History)
  *
@@ -17,7 +17,7 @@
   'use strict';
 
   // -- Constants -------------------------------------------------------
-  const STORAGE_KEY = 'packback_mvp_state';
+  const STORAGE_KEY = 'unscrewed_mvp_state';
   const REQUIRED_BAGS = ['A', 'B', 'C'];
   const VALID_STEPS = [1, 2, 3, 4, 5];
 
@@ -292,7 +292,7 @@
     if (match.matched) {
       const validated = validateMetaImport(match.metaOutput);
       if (!validated.valid) {
-        toast('The saved response did not pass PackBack\'s checks (' + validated.error + '). Reload the page and try again.');
+        toast('The saved response did not pass Unscrewed\'s checks (' + validated.error + '). Reload the page and try again.');
         return;
       }
       state.extractionResult = validated;
@@ -373,7 +373,7 @@
     liveBtn.textContent = 'Asking Meta (up to 60 seconds)';
     setLiveStatus('Sending your photo and notes to Meta. This can take up to a minute.', false);
     try {
-      const r = await fetch('api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PackBack': '1' }, body: JSON.stringify(body) });
+      const r = await fetch('api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Unscrewed': '1' }, body: JSON.stringify(body) });
       let j;
       try { j = await r.json(); } catch { j = null; }
       if (!r.ok || !j || j.error) {
@@ -384,7 +384,7 @@
       }
       const validated = validateMetaImport(toImportShape(j.proposal));
       if (!validated.valid) {
-        setLiveStatus('PackBack rejected Meta\'s answer: ' + validated.error + '. Try the live call again.', true);
+        setLiveStatus('Unscrewed rejected Meta\'s answer: ' + validated.error + '. Try the live call again.', true);
         logAction('live_rejected', validated.error);
         return;
       }
@@ -399,7 +399,7 @@
       setLiveStatus('', false);
       goToStep('review');
     } catch {
-      setLiveStatus('Could not reach the PackBack server. Check that it is still running, then try again.', true);
+      setLiveStatus('Could not reach the Unscrewed server. Check that it is still running, then try again.', true);
     } finally {
       liveBtn.textContent = LIVE_LABEL;
       liveBtn.disabled = !liveAvailable;
@@ -541,7 +541,7 @@
     let parsed;
     try { parsed = JSON.parse(raw); } catch { toast('That text is not valid JSON. Copy the whole response from Meta and paste it again.'); return; }
     const validated = validateMetaImport(parsed);
-    if (!validated.valid) { toast('PackBack could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
+    if (!validated.valid) { toast('Unscrewed could not use that response: ' + validated.error + '. Fix it and try again.'); return; }
     state.extractionResult = validated;
     state.extractionMeta = null;
     state.extractionInputHash = hashNotes(getCurrentNotes());
@@ -566,7 +566,7 @@
     const ext = state.extractionResult;
     if (!ext) return;
 
-    const rec = new PackBackRecord('mvp-' + Date.now());
+    const rec = new UnscrewedRecord('mvp-' + Date.now());
 
     const notes = getCurrentNotes();
     notes.forEach((n) => {
@@ -913,7 +913,7 @@
     extraction_seeded: (d) => ['Built the bag record from a saved Meta response', SCENARIO_LABELS[d] || d],
     extraction_live: (d) => ['Built the bag record from a live Meta call', d],
     live_failed: (d) => ['The live Meta call failed', d ? 'Reason: ' + d : ''],
-    live_rejected: (d) => ['PackBack rejected Meta\'s answer', d],
+    live_rejected: (d) => ['Unscrewed rejected Meta\'s answer', d],
     json_imported: () => ['Pasted a Meta response', ''],
     record_built: (d) => ['Started the confirmation list', d],
     step_mapped: (d) => { const m = /^(.+)=(\d+)$/.exec(d); return m ? ['Chose a step for bag ' + m[1], 'Step ' + m[2]] : ['Chose a step', d]; },
@@ -991,7 +991,7 @@
 
   // -- Reset -----------------------------------------------------------
   $('#btn-reset').addEventListener('click', () => {
-    if (!confirm('Clear everything PackBack saved in this browser and start over?')) return;
+    if (!confirm('Clear everything Unscrewed saved in this browser and start over?')) return;
     state = defaultState();
     currentRecord = null;
     confirmations = {};

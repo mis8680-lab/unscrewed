@@ -1,5 +1,5 @@
 /**
- * PackBack Deterministic Record Safeguards - v2 (Browser build)
+ * Unscrewed Deterministic Record Safeguards - v2 (Browser build)
  * Identical logic to lib/record.mjs, adapted for <script> loading.
  * Plain JS, zero dependencies.
  */
@@ -49,10 +49,10 @@ function updateField(field, newValue, newSource, evidence, reason) {
   return { updated: true, blocked: false, conflict: false, reason: null };
 }
 
-class PackBackRecord {
+class UnscrewedRecord {
   constructor(sessionId) {
     const ts = now();
-    this._data = { version: 'packback-record-v2', sessionId: sessionId || `session-${Date.now()}`, metadata: { createdAt: ts, updatedAt: ts }, steps: [], parts: [], conflicts: [] };
+    this._data = { version: 'unscrewed-record-v2', sessionId: sessionId || `session-${Date.now()}`, metadata: { createdAt: ts, updatedAt: ts }, steps: [], parts: [], conflicts: [] };
   }
   addStep({ action, source, evidence, removedPartIds }) {
     validateSource(source);
@@ -136,10 +136,10 @@ class PackBackRecord {
     })) };
   }
   toJSON() { return deepClone(this._data); }
-  static fromJSON(data) { const rec = new PackBackRecord(data.sessionId); rec._data = deepClone(data); return rec; }
+  static fromJSON(data) { const rec = new UnscrewedRecord(data.sessionId); rec._data = deepClone(data); return rec; }
   _touch() { this._data.metadata.updatedAt = now(); }
 }
 
 // Expose globally for browser
-window.PackBackRecord = PackBackRecord;
+window.UnscrewedRecord = UnscrewedRecord;
 window.SOURCE_RANK = SOURCE_RANK;

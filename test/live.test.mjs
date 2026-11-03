@@ -34,7 +34,7 @@ async function withServer(opts, fn) {
   const base = `http://127.0.0.1:${srv.address().port}`;
   try { return await fn(base); } finally { await new Promise(r => srv.close(r)); }
 }
-const post = (base, body, raw, hdrs) => fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PackBack': '1', ...(hdrs || {}) }, body: raw ?? JSON.stringify(body) });
+const post = (base, body, raw, hdrs) => fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Unscrewed': '1', ...(hdrs || {}) }, body: raw ?? JSON.stringify(body) });
 
 describe('Live Meta handler', () => {
   it('success returns proposal, usage, latency and sends prompt + file id + bearer', async () => {
@@ -203,13 +203,13 @@ describe('Live: CSRF gate and rate limit', () => {
   const ok = { fetch: mockFetch(JSON.stringify(goodProposal)), env: { META_API_KEY: KEY } };
   const forbidden = async (r) => { assert.equal(r.status, 403); assert.deepEqual(await r.json(), { error: { code: 'forbidden', message: 'Request rejected' } }); };
 
-  it('rejects missing X-PackBack, wrong content type, cross-site fetch metadata and foreign Origin', async () => {
+  it('rejects missing X-Unscrewed, wrong content type, cross-site fetch metadata and foreign Origin', async () => {
     const calls = [];
     await withServer({ fetch: mockFetch(JSON.stringify(goodProposal), calls), env: { META_API_KEY: KEY } }, async base => {
       const body = JSON.stringify({ notes: NOTES });
       await forbidden(await fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }));
-      await forbidden(await fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-PackBack': '1' }, body }));
-      await forbidden(await fetch(base + '/api/extract', { method: 'POST', headers: { 'X-PackBack': '1' }, body: new Uint8Array(Buffer.from(body)) }));
+      await forbidden(await fetch(base + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-Unscrewed': '1' }, body }));
+      await forbidden(await fetch(base + '/api/extract', { method: 'POST', headers: { 'X-Unscrewed': '1' }, body: new Uint8Array(Buffer.from(body)) }));
       await forbidden(await post(base, { notes: NOTES }, undefined, { 'Sec-Fetch-Site': 'cross-site' }));
       await forbidden(await post(base, { notes: NOTES }, undefined, { 'Sec-Fetch-Site': 'same-site' }));
       await forbidden(await post(base, { notes: NOTES }, undefined, { Origin: 'https://evil.example' }));
@@ -346,7 +346,7 @@ describe('Live: transport limits, magic bytes and static root', () => {
     // private helper is exercised through the handler with a short-lived fake request
     const handle = lm.createApiHandler({ env: { META_API_KEY: KEY }, bodyDeadlineMs: 50 });
     stalled.method = 'POST';
-    stalled.headers = { 'content-type': 'application/json', 'x-packback': '1' };
+    stalled.headers = { 'content-type': 'application/json', 'x-unscrewed': '1' };
     stalled.socket = { localPort: 1 };
     let status, payload;
     const res = { writeHead: s => { status = s; }, end: p => { payload = p; } };

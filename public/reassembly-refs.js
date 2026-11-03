@@ -1,5 +1,5 @@
 /**
- * PackBack: pure helper for the Reassembly Reference.
+ * Unscrewed: pure helper for the Reassembly Reference.
  * Derives per-step confirmation lines from record data only (never model output).
  * Loads as a browser global or via CommonJS-style `module.exports`.
  */
