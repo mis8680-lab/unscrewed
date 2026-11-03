@@ -154,13 +154,13 @@ describe('Live Meta handler', () => {
     await withServer({ fetch: async () => { throw new Error('must not be called'); }, env: {} }, async base => {
       const r = await post(base, { notes: NOTES });
       assert.equal((await r.json()).error.code, 'no_key');
-      assert.deepEqual(await (await fetch(base + '/api/status')).json(), { live: false, model: 'muse-wonder-1.0' });
+      assert.deepEqual(await (await fetch(base + '/api/status')).json(), { live: false, model: 'muse-wonder-1.0', voice: false, voiceModel: 'muse-voice-transcribe-1.0', maxVoiceSeconds: 60 });
     });
   });
 
   it('status live:true with key', async () => {
     await withServer({ env: { META_API_KEY: KEY } }, async base => {
-      assert.deepEqual(await (await fetch(base + '/api/status')).json(), { live: true, model: 'muse-wonder-1.0' });
+      assert.deepEqual(await (await fetch(base + '/api/status')).json(), { live: true, model: 'muse-wonder-1.0', voice: true, voiceModel: 'muse-voice-transcribe-1.0', maxVoiceSeconds: 60 });
     });
   });
 

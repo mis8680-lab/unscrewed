@@ -327,3 +327,9 @@ h2 + .block, h2 + div > .block:first-child { border-top: none; }
 }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* Voice notes */
+.voice-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.voice-status { font-size: 0.875rem; color: var(--muted); }
+.voice-hint { margin: 4px 0 0; color: var(--ink); font-weight: 600; }
+.mic-btn[aria-pressed="true"] { border-color: #B3261E; color: #B3261E; }

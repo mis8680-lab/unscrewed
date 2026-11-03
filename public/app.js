@@ -196,13 +196,24 @@
       div.className = 'panel-note';
       div.innerHTML = `
         <label for="note-${esc(n.panel)}">Step ${esc(n.panel)}</label>
-        <textarea id="note-${esc(n.panel)}" data-panel="${esc(n.panel)}" rows="2">${esc(n.note)}</textarea>
+        <textarea id="note-${esc(n.panel)}" data-panel="${esc(n.panel)}" rows="2" aria-describedby="voice-hint-${esc(n.panel)}">${esc(n.note)}</textarea>
+        <div class="voice-row">
+          <button type="button" class="btn btn-outline btn-sm mic-btn" data-mic="${esc(n.panel)}" aria-pressed="false"${voiceAvailable ? '' : ' disabled'}>Record note</button>
+          <span class="voice-status" id="voice-status-${esc(n.panel)}" role="status" aria-live="polite">${voiceAvailable ? '' : esc(VOICE_OFF_TEXT)}</span>
+        </div>
+        <p class="hint voice-hint" id="voice-hint-${esc(n.panel)}"${voiceUnedited.has(n.panel) ? '' : ' hidden'}>Transcribed by Meta. Check it.</p>
       `;
       container.appendChild(div);
     });
 
     container.querySelectorAll('textarea').forEach(ta => {
-      ta.addEventListener('input', () => {
+      ta.addEventListener('input', (e) => {
+        if (e.isTrusted) {
+          const p = parseInt(ta.dataset.panel, 10);
+          voiceUnedited.delete(p);
+          const h = document.getElementById('voice-hint-' + p);
+          if (h) h.hidden = true;
+        }
         state.editedNotes = getCurrentNotes();
         if (state.extractionResult) {
           const currentHash = hashNotes(state.editedNotes);
@@ -229,6 +240,74 @@
       $('#custom-image-badge').style.display = 'none';
     }
   }
+
+  // -- Voice notes (Meta Muse Voice Transcribe) ---------------------------
+  const VOICE_OFF_TEXT = 'Voice notes need a Meta API key on the server.';
+  let voiceAvailable = false;
+  const voiceUnedited = new Set();
+  let activeMic = null; // { panel, recorder }
+
+  function setVoiceStatus(panel, msg) {
+    const el = document.getElementById('voice-status-' + panel);
+    if (el) el.textContent = msg || '';
+  }
+  function resetMicButton(panel) {
+    const b = document.querySelector('[data-mic="' + panel + '"]');
+    if (b) { b.textContent = 'Record note'; b.setAttribute('aria-pressed', 'false'); }
+  }
+
+  async function finishRecording(panel, wavPromise) {
+    setVoiceStatus(panel, 'Sending to Meta to transcribe...');
+    try {
+      const wav = await wavPromise;
+      const r = await fetch('api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav', 'X-Unscrewed': '1' }, body: wav });
+      let j; try { j = await r.json(); } catch { j = null; }
+      if (!r.ok || !j || j.error || typeof j.transcript !== 'string') {
+        setVoiceStatus(panel, 'Transcription failed: ' + ((j && j.error && j.error.message) || 'no reason was given') + '. Type the note instead.');
+        logAction('voice_failed', (j && j.error && j.error.code) || r.status);
+        return;
+      }
+      const ta = document.getElementById('note-' + panel);
+      if (!ta || !j.transcript.trim()) { setVoiceStatus(panel, 'Meta heard no speech. Try again closer to the mic.'); return; }
+      ta.value = j.transcript.slice(0, 500);
+      ta.dispatchEvent(new Event('input'));
+      voiceUnedited.add(panel);
+      const h = document.getElementById('voice-hint-' + panel);
+      if (h) h.hidden = false;
+      setVoiceStatus(panel, '');
+      logAction('voice_transcribed', 'step ' + panel);
+    } catch (e) {
+      setVoiceStatus(panel, 'Could not use that recording: ' + (e && e.message ? e.message : 'unknown error') + ' Type the note instead.');
+    }
+  }
+
+  $('#notes-container').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-mic]');
+    if (!btn || btn.disabled) return;
+    const panel = parseInt(btn.dataset.mic, 10);
+    if (activeMic && activeMic.panel === panel) {
+      const wavPromise = activeMic.recorder.stop();
+      activeMic = null;
+      resetMicButton(panel);
+      finishRecording(panel, wavPromise);
+      return;
+    }
+    if (activeMic) { setVoiceStatus(panel, 'Stop the other recording first.'); return; }
+    if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') { setVoiceStatus(panel, 'This browser cannot record audio. Type the note instead.'); return; }
+    const recorder = UnscrewedVoice.createRecorder(() => {
+      if (activeMic && activeMic.panel === panel) {
+        const p = activeMic.panel; activeMic = null; resetMicButton(p);
+        setVoiceStatus(p, 'Reached 60 seconds, stopped.');
+        finishRecording(p, recorder.stop());
+      }
+    });
+    try { await recorder.start(); }
+    catch { setVoiceStatus(panel, 'Microphone access was blocked. Allow it in the browser, or type the note.'); return; }
+    activeMic = { panel, recorder };
+    btn.textContent = 'Stop recording';
+    btn.setAttribute('aria-pressed', 'true');
+    setVoiceStatus(panel, 'Recording, up to 60 seconds.');
+  });
 
   function invalidateExtraction(reason) {
     state.extractionResult = null;
@@ -333,10 +412,13 @@
       const r = await fetch('api/status');
       const j = await r.json();
       liveAvailable = j.live === true;
+      voiceAvailable = j.voice === true;
       if (typeof j.model === 'string') liveModel = j.model;
     } catch { liveAvailable = false; }
     $('#mode-badge').textContent = liveAvailable ? 'Live Meta calls on (' + liveModel + ')' : 'Using saved Meta responses';
     liveBtn.disabled = !liveAvailable;
+    document.querySelectorAll('[data-mic]').forEach(b => { b.disabled = !voiceAvailable; });
+    document.querySelectorAll('.voice-status').forEach(el => { if (!voiceAvailable) el.textContent = VOICE_OFF_TEXT; });
     if (!liveAvailable) setLiveStatus('Live Meta calls are off because the server has no Meta API key. The saved response works without one.', false);
   }
 
@@ -918,6 +1000,8 @@
     record_built: (d) => ['Started the confirmation list', d],
     step_mapped: (d) => { const m = /^(.+)=(\d+)$/.exec(d); return m ? ['Chose a step for bag ' + m[1], 'Step ' + m[2]] : ['Chose a step', d]; },
     quantity_confirmed: (d) => { const m = /^(.+)=(\d+)$/.exec(d); return m ? ['Confirmed bag ' + m[1], m[2] + ' screws'] : ['Confirmed a bag', d]; },
+    voice_transcribed: (d) => ['Transcribed a voice note with Meta', d],
+    voice_failed: (d) => ['A voice note could not be transcribed', d ? 'Reason: ' + d : ''],
     quantity_revoked: (d) => ['Reopened bag ' + d, ''],
   };
   function friendlyReason(r) {
