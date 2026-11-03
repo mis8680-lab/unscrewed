@@ -1,0 +1,149 @@
+{
+  "_note": "One live muse-wonder-1.0 call with five per-step photos cropped from fixtures/synthetic-shelf.png and the conflict notes. This is the validated, sanitized proposal returned by the server. Proposal only: nothing here is confirmed.",
+  "mode": "live",
+  "model": "muse-wonder-1.0",
+  "latencyMs": 16549,
+  "usage": {
+    "input_tokens": 2738,
+    "output_tokens": 1808,
+    "total_tokens": 4546
+  },
+  "steps": 5,
+  "proposal": {
+    "bags": [
+      {
+        "id": "A",
+        "reports": [
+          {
+            "value": 6,
+            "evidence": [
+              "step2"
+            ]
+          },
+          {
+            "value": 4,
+            "evidence": [
+              "step5"
+            ]
+          }
+        ],
+        "step": 2,
+        "evidence": [
+          "step2",
+          "step5"
+        ],
+        "confirmed_quantity": null,
+        "model_confirmation_proposal": null,
+        "requires_user_event": true
+      },
+      {
+        "id": "B",
+        "reports": [
+          {
+            "value": 4,
+            "evidence": [
+              "step3"
+            ]
+          },
+          {
+            "value": 4,
+            "evidence": [
+              "step5"
+            ]
+          }
+        ],
+        "step": 3,
+        "evidence": [
+          "step3",
+          "step5"
+        ],
+        "confirmed_quantity": null,
+        "model_confirmation_proposal": null,
+        "requires_user_event": true
+      },
+      {
+        "id": "C",
+        "reports": [
+          {
+            "value": 4,
+            "evidence": [
+              "step4"
+            ]
+          },
+          {
+            "value": 4,
+            "evidence": [
+              "step5"
+            ]
+          }
+        ],
+        "step": 4,
+        "evidence": [
+          "step4",
+          "step5"
+        ],
+        "confirmed_quantity": null,
+        "model_confirmation_proposal": null,
+        "requires_user_event": true
+      }
+    ],
+    "questions": [
+      "What is the count-checked quantity for bag A, the value from step2 or the value from step5?",
+      "Can you count-check bags A, B, and C and confirm which reported quantity is correct for each?"
+    ],
+    "conflicts": [
+      {
+        "bag": "A",
+        "reported_values": [
+          6,
+          4
+        ],
+        "evidence": [
+          "step2",
+          "step5"
+        ],
+        "status": "unresolved",
+        "resolution": null
+      }
+    ],
+    "visual_limitations": [
+      "Screw quantities inside sealed bags cannot be reliably confirmed from the photos, so visual quantity is unknown.",
+      "Panel orientation and attachment details may be obscured where panels overlap or face away from the camera."
+    ],
+    "observations": [
+      {
+        "step": 1,
+        "text": "Check the assembled unit with side panels on the left and right, shelves between them, and a back panel behind the shelves."
+      },
+      {
+        "step": 2,
+        "text": "Check the loose panel laid flat in front, which appears to be the back panel, with a bag labeled A at the front right."
+      },
+      {
+        "step": 2,
+        "text": "Check that the remaining frame still has upper and lower shelves attached between the side panels."
+      },
+      {
+        "step": 3,
+        "text": "Check the loose shelf laid flat at the front left and the bags labeled A and B at the front right."
+      },
+      {
+        "step": 3,
+        "text": "Check that a lower shelf remains attached between the upright side panels, with the upper area open."
+      },
+      {
+        "step": 4,
+        "text": "Check the horizontal panel resting low between the side panels and the bags labeled A, B, and C on the right."
+      },
+      {
+        "step": 5,
+        "text": "Check the flat wooden panels laid out above and to the left of the bags labeled A, B, and C."
+      },
+      {
+        "step": 5,
+        "text": "Check the labels and panel hole positions for side, shelf, and back panel identification."
+      }
+    ],
+    "observations_dropped": 0
+  }
+}

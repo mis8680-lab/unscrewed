@@ -136,3 +136,12 @@ Plan v1 and what was revised:
 | Dark mode switch | Kept from the old UI | Dropped: the use scene is a lit workbench, and two themes doubles the contrast checks. |
 
 Impeccable anti-patterns checked: no nested cards, no gradient text, no glass, no hard offset shadows, no hero-metric block, no modal for a non-blocking task (the paste-a-response form is a disclosure, not a dialog), icons are drawn in one stroke weight, copy names the action and the recovery.
+
+## Meta features in the interface (added late)
+
+These keep the workbench and labeled-bag look. No new colors, no new fonts.
+
+- **Steps are rows on the workbench.** Each step is a row: step number, an optional photo slot (own-record mode), the note box, a small outline "Record note" button and, in own-record mode, a quiet "Remove step N" text button. "Add step" sits under the list as an outline button. Two to twelve steps. Sample mode keeps the single contact-sheet photo for its five steps.
+- **Voice** is a plain outline button that turns marker red while recording ("Stop recording"). After a transcript lands, "Transcribed by Meta. Check it." sits under the note in bold ink until the person edits the text. Without a key the button is disabled and the reason is written next to it.
+- **Seen in your photo (check it)** is the only italic text in the product, in a white box with a thin dashed rule. Italic text means "Meta's guess, not your record". It appears under each step on Check and under the step's note on Put back. It never uses the green of a confirmed bag and never sits inside a bag.
+- **Bags are variable.** The bag row shows one zip bag per letter the notes mention, A to H, using the same label and border states.

@@ -165,3 +165,21 @@ describe('observations: put-back references and UI contract', () => {
     }
   });
 });
+
+describe('saved live per-step sample', () => {
+  const sample = JSON.parse(read('../fixtures/meta/live-steps-sample.json'));
+  it('is a validated proposal for the five conflict steps with photo observations', () => {
+    const p = sample.proposal;
+    assert.equal(sample.steps, 5);
+    assert.equal(sample.model, 'muse-wonder-1.0');
+    assert.ok(p.observations.length >= 3);
+    assert.equal(p.observations_dropped, 0);
+    assert.ok(p.observations.every(o => observationHasFastenerCount(o.text) === false && o.text.length <= 140));
+    assert.ok(p.bags.every(b => b.confirmed_quantity === null && b.model_confirmation_proposal === null));
+    assert.equal(p.conflicts.length, 1);
+    const shape = { safety_verified: false, bags: p.bags.map(b => ({ id: b.id, reported_quantities: b.reports, step: b.step, evidence: b.evidence })), questions: p.questions, visual_limitations: p.visual_limitations, observations: p.observations };
+    const v = validateMetaImport(shape, { expectedBags: ['A', 'B', 'C'], stepCount: 5 });
+    assert.equal(v.valid, true, v.error);
+    assert.equal(v.observations.length, p.observations.length);
+  });
+});
